@@ -184,8 +184,44 @@ class SettingsDialog(QDialog):
 
         main_layout.addLayout(layout)
         main_layout.addStretch()
+
+        # Cache management section
+        cache_section_layout = QVBoxLayout()
+        cache_label = QLabel("Cache Management")
+        cache_label.setStyleSheet("font-weight: bold; margin-top: 20px;")
+        cache_section_layout.addWidget(cache_label)
+
+        clear_all_btn = QPushButton("Clear All Caches")
+        clear_all_btn.setToolTip("Clear cache for all accounts. They will re-download content.")
+        clear_all_btn.clicked.connect(self._on_clear_all_caches)
+        cache_section_layout.addWidget(clear_all_btn)
+
+        main_layout.addLayout(cache_section_layout)
         widget.setLayout(main_layout)
         return widget
+
+    def _on_clear_all_caches(self) -> None:
+        """Clear all caches globally."""
+        reply = QMessageBox.question(
+            self,
+            "Clear All Caches",
+            "Are you sure you want to clear the cache for all accounts?\n\n"
+            "This will allow all listeners to re-download content that was previously seen.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            if self.app_controller.clear_all_caches():
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    "Cache cleared for all accounts."
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    "Failed to clear caches."
+                )
 
     def _refresh_accounts_list(self) -> None:
         """Refresh accounts list."""
@@ -353,6 +389,17 @@ class AccountEditDialog(QDialog):
 
         form_layout.addRow("Download Path:", path_layout)
 
+        # Auto-download count
+        self.auto_download_count_spin = QSpinBox()
+        self.auto_download_count_spin.setMinimum(1)
+        self.auto_download_count_spin.setMaximum(5)
+        self.auto_download_count_spin.setValue(1)
+        if not self.is_new:
+            account = self.app_controller.config_manager.get_account(self.account_name)
+            if account:
+                self.auto_download_count_spin.setValue(account.auto_download_count)
+        form_layout.addRow("Auto-download Count:", self.auto_download_count_spin)
+
         # Enabled checkbox
         self.enabled_check = QCheckBox("Enable listening for this account")
         if not self.is_new:
@@ -364,6 +411,15 @@ class AccountEditDialog(QDialog):
         form_layout.addRow("", self.enabled_check)
 
         layout.addLayout(form_layout)
+
+        # Clear cache button (only for existing accounts)
+        if not self.is_new:
+            cache_button_layout = QHBoxLayout()
+            cache_button_layout.addStretch()
+            clear_cache_btn = QPushButton("Clear Cache for This Account")
+            clear_cache_btn.clicked.connect(self._on_clear_cache)
+            cache_button_layout.addWidget(clear_cache_btn)
+            layout.addLayout(cache_button_layout)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -390,6 +446,29 @@ class AccountEditDialog(QDialog):
         )
         if path:
             self.path_input.setText(path)
+
+    def _on_clear_cache(self) -> None:
+        """Clear cache for this account."""
+        reply = QMessageBox.question(
+            self,
+            "Clear Cache",
+            f"Are you sure you want to clear the cache for '{self.account_name}'?\n\n"
+            "This will allow the listener to re-download content that was previously seen.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            if self.app_controller.clear_account_cache(self.account_name):
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Cache cleared for '{self.account_name}'."
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Failed to clear cache for '{self.account_name}'."
+                )
 
     def _on_accept(self) -> None:
         """Accept and save account."""
@@ -418,6 +497,7 @@ class AccountEditDialog(QDialog):
                 platform=platform,
                 download_path=download_path,
                 enabled=self.enabled_check.isChecked(),
+                auto_download_count=self.auto_download_count_spin.value(),
             )
 
             if self.is_new:

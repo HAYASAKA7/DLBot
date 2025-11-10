@@ -22,6 +22,7 @@ class Account:
     download_path: str
     enabled: bool = True
     check_interval: int = 300  # seconds
+    auto_download_count: int = 1  # Number of new videos to auto-download (1-5)
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""

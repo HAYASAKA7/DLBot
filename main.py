@@ -11,13 +11,18 @@ from pathlib import Path
 log_dir = Path("logs")
 log_dir.mkdir(exist_ok=True)
 
+# Create handlers with proper encoding
+file_handler = logging.FileHandler(log_dir / "dlbot.log", encoding='utf-8')
+console_handler = logging.StreamHandler(sys.stdout)
+# Set console encoding to UTF-8 if running on Windows
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(log_dir / "dlbot.log"),
-        logging.StreamHandler(),
-    ],
+    handlers=[file_handler, console_handler],
 )
 
 logger = logging.getLogger(__name__)

@@ -58,6 +58,14 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("DLBot - Content Listener & Downloader")
         self.setGeometry(100, 100, 1000, 600)
+        
+        # Set window icon
+        icon_path = Path(__file__).parent.parent.parent / "DLBot.jpg"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+            logger.info(f"Window icon loaded from {icon_path}")
+        else:
+            logger.warning(f"Icon file not found at {icon_path}")
 
         self._init_ui()
         self._init_tray()
@@ -147,6 +155,13 @@ class MainWindow(QMainWindow):
 
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setContextMenu(tray_menu)
+        
+        # Set tray icon
+        icon_path = Path(__file__).parent.parent.parent / "DLBot.jpg"
+        if icon_path.exists():
+            self.tray_icon.setIcon(QIcon(str(icon_path)))
+            logger.info(f"Tray icon loaded from {icon_path}")
+        
         self.tray_icon.show()
 
     def _setup_timer(self) -> None:

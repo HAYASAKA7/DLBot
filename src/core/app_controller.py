@@ -37,6 +37,7 @@ class AppController:
                     account_name=account.name,
                     account_url=account.url,
                     download_path=account.download_path,
+                    auto_download_count=account.auto_download_count,
                     on_status_change=self._on_listener_status_change,
                     on_video_found=self._on_video_found,
                     on_download_complete=self._on_download_complete,
@@ -58,6 +59,7 @@ class AppController:
                 account_name=account.name,
                 account_url=account.url,
                 download_path=account.download_path,
+                auto_download_count=account.auto_download_count,
                 on_status_change=self._on_listener_status_change,
                 on_video_found=self._on_video_found,
                 on_download_complete=self._on_download_complete,
@@ -85,6 +87,7 @@ class AppController:
                 account_name=account.name,
                 account_url=account.url,
                 download_path=account.download_path,
+                auto_download_count=account.auto_download_count,
                 on_status_change=self._on_listener_status_change,
                 on_video_found=self._on_video_found,
                 on_download_complete=self._on_download_complete,
@@ -115,6 +118,14 @@ class AppController:
     def stop_all_listeners(self) -> None:
         """Stop all listeners."""
         self.listener_manager.stop_all()
+
+    def clear_account_cache(self, account_name: str) -> bool:
+        """Clear cache for a specific account."""
+        return self.listener_manager.clear_cache(account_name)
+
+    def clear_all_caches(self) -> bool:
+        """Clear cache for all accounts."""
+        return self.listener_manager.clear_all_caches()
 
     def _on_listener_status_change(self, account_name: str, is_listening: bool) -> None:
         """Handle listener status change."""

@@ -27,6 +27,7 @@ class Listener:
         account_name: str,
         download_path: str,
         check_interval: int = 300,  # 5 minutes
+        auto_download_count: int = 1,  # Number of new videos to auto-download (1-5)
         on_status_change: Optional[Callable] = None,
         on_video_found: Optional[Callable] = None,
         on_download_complete: Optional[Callable] = None,
@@ -39,6 +40,7 @@ class Listener:
             account_name: Human-readable account name
             download_path: Directory to download videos
             check_interval: Seconds between checks (default 300)
+            auto_download_count: Number of new videos to auto-download (1-5, default 1)
             on_status_change: Callback when listener status changes
             on_video_found: Callback when new video is found
             on_download_complete: Callback when download finishes
@@ -47,6 +49,7 @@ class Listener:
         self.account_name = account_name
         self.download_path = Path(download_path)
         self.check_interval = check_interval
+        self.auto_download_count = auto_download_count
         self.on_status_change = on_status_change
         self.on_video_found = on_video_found
         self.on_download_complete = on_download_complete
@@ -148,6 +151,31 @@ class Listener:
         except Exception as e:
             logger.error(f"Error saving cache for {self.account_name}: {e}", exc_info=True)
 
+    def clear_cache(self) -> bool:
+        """Clear the cache for this account (allows re-downloading of seen videos)."""
+        try:
+            with self._lock:
+                self._last_videos.clear()
+                logger.info(f"Cleared cache for {self.account_name}")
+            self._save_cache()
+            return True
+        except Exception as e:
+            logger.error(f"Error clearing cache for {self.account_name}: {e}")
+            return False
+
+    def _file_exists_in_destination(self, video_id: str) -> bool:
+        """Check if a video file already exists in the destination folder."""
+        try:
+            # Check if any file with the video_id exists in the download path
+            for file in self.download_path.iterdir():
+                if video_id in file.name:
+                    logger.debug(f"File already exists: {file.name}")
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error checking file existence: {e}")
+            return False
+
     def _listen_loop(self) -> None:
         """Main listening loop running in separate thread."""
         while self._running:
@@ -181,9 +209,9 @@ class Listener:
                 if "entries" not in info or not info["entries"]:
                     return
 
-                # Check first few videos/streams
+                # Check first N videos/streams (based on auto_download_count)
                 new_videos_found = False
-                for entry in info["entries"][:5]:
+                for entry in info["entries"][: self.auto_download_count]:
                     if not entry:
                         continue
 
@@ -192,6 +220,12 @@ class Listener:
 
                     # Skip if we've already seen this
                     if video_id in self._last_videos:
+                        continue
+
+                    # Skip if file already exists in destination folder
+                    if self._file_exists_in_destination(video_id):
+                        logger.info(f"File already exists in destination: {title}")
+                        self._last_videos[video_id] = title  # Mark as seen anyway
                         continue
 
                     # Mark as seen
@@ -235,6 +269,9 @@ class Listener:
         try:
             logger.info(f"Starting download: {title}")
 
+            # Sanitize the title for use in filename (remove invalid Windows characters)
+            sanitized_title = self._sanitize_filename(title)
+
             ydl_opts = {
                 "format": "bestvideo+bestaudio/best",  # Highest quality: best video + best audio
                 "postprocessors": [
@@ -243,7 +280,7 @@ class Listener:
                     },
                 ],
                 "outtmpl": str(
-                    self.download_path / f"{self.account_name}_%(title)s_%(id)s.%(ext)s"
+                    self.download_path / f"{self.account_name}_{sanitized_title}_%(id)s.%(ext)s"
                 ),
                 "quiet": False,
                 "no_warnings": False,
@@ -259,6 +296,22 @@ class Listener:
 
         except Exception as e:
             logger.error(f"Error downloading {title}: {e}")
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename by removing or replacing invalid Windows characters."""
+        import re
+        # Invalid Windows filename characters: < > : " / \ | ? *
+        # Also include lookalike characters that cause issues (division slash, etc.)
+        invalid_chars = r'[<>:"/\\|?*\u00F7\u29F8\u2215\u3002]'
+        sanitized = re.sub(invalid_chars, '_', filename)
+        # Also remove control characters
+        sanitized = ''.join(c for c in sanitized if ord(c) >= 32)
+        # Limit filename length (Windows has 255 char limit, be conservative)
+        # Account for account_name prefix and video ID suffix
+        max_length = 80
+        if len(sanitized) > max_length:
+            sanitized = sanitized[:max_length]
+        return sanitized.strip()
 
     def _progress_hook(self, d: dict) -> None:
         """Handle download progress."""
@@ -286,6 +339,8 @@ class ListenerManager:
         account_name: str,
         account_url: str,
         download_path: str,
+        check_interval: int = 300,
+        auto_download_count: int = 1,
         on_status_change: Optional[Callable] = None,
         on_video_found: Optional[Callable] = None,
         on_download_complete: Optional[Callable] = None,
@@ -300,6 +355,8 @@ class ListenerManager:
                 account_url=account_url,
                 account_name=account_name,
                 download_path=download_path,
+                check_interval=check_interval,
+                auto_download_count=auto_download_count,
                 on_status_change=on_status_change,
                 on_video_found=on_video_found,
                 on_download_complete=on_download_complete,
@@ -354,3 +411,26 @@ class ListenerManager:
                     listener.stop()
                 except Exception as e:
                     logger.error(f"Error stopping listener: {e}")
+
+    def clear_cache(self, account_name: str) -> bool:
+        """Clear cache for a specific account."""
+        listener = self.get_listener(account_name)
+        if listener:
+            return listener.clear_cache()
+        return False
+
+    def clear_all_caches(self) -> bool:
+        """Clear cache for all listeners."""
+        try:
+            with self._lock:
+                for listener in self._listeners.values():
+                    try:
+                        listener.clear_cache()
+                    except Exception as e:
+                        logger.error(f"Error clearing cache for {listener.account_name}: {e}")
+            logger.info("Cleared all listener caches")
+            return True
+        except Exception as e:
+            logger.error(f"Error clearing all caches: {e}")
+            return False
+
