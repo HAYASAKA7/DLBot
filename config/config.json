@@ -1,0 +1,46 @@
+{
+  "accounts": [
+    {
+      "name": "yuno",
+      "url": "https://www.youtube.com/@yuno_yumemita",
+      "platform": "youtube",
+      "download_path": "downloads",
+      "enabled": true,
+      "check_interval": 300,
+      "auto_download_count": 1
+    },
+    {
+      "name": "suisei",
+      "url": "https://www.youtube.com/@HoshimachiSuisei",
+      "platform": "youtube",
+      "download_path": "D:/Projects/Python/DLBot/downloads",
+      "enabled": true,
+      "check_interval": 300,
+      "auto_download_count": 1
+    },
+    {
+      "name": "arare",
+      "url": "https://www.youtube.com/@arale_yumemita",
+      "platform": "youtube",
+      "download_path": "downloads",
+      "enabled": true,
+      "check_interval": 300,
+      "auto_download_count": 1
+    },
+    {
+      "name": "ESLCSHighlights",
+      "url": "https://www.youtube.com/@ESLCSHighlights",
+      "platform": "youtube",
+      "download_path": "downloads",
+      "enabled": true,
+      "check_interval": 300,
+      "auto_download_count": 1
+    }
+  ],
+  "default_download_path": "downloads",
+  "check_interval": 300,
+  "auto_download": true,
+  "minimize_to_tray": true,
+  "start_minimized": false,
+  "theme": "light"
+}

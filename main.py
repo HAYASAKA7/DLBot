@@ -15,9 +15,13 @@ log_dir.mkdir(exist_ok=True)
 file_handler = logging.FileHandler(log_dir / "dlbot.log", encoding='utf-8')
 console_handler = logging.StreamHandler(sys.stdout)
 # Set console encoding to UTF-8 if running on Windows
-if sys.platform == 'win32':
+if sys.platform == 'win32' and sys.stdout is not None:
     import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    except (AttributeError, ValueError):
+        # If stdout is None or doesn't have buffer (e.g., running as EXE without console)
+        pass
 
 logging.basicConfig(
     level=logging.INFO,
