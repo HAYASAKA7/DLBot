@@ -4,6 +4,7 @@ Manages the overall application state and lifecycle.
 """
 
 import logging
+import subprocess
 from typing import Dict, Optional
 from pathlib import Path
 
@@ -129,6 +130,57 @@ class AppController:
     def clear_all_caches(self) -> bool:
         """Clear cache for all accounts."""
         return self.listener_manager.clear_all_caches()
+
+    def download_url(self, url: str, download_path: str) -> bool:
+        """
+        Download a single video from URL using yt-dlp.
+        
+        Args:
+            url: Video URL to download
+            download_path: Directory to save the video
+            
+        Returns:
+            True if download was successful, False otherwise
+        """
+        try:
+            # Ensure download directory exists
+            Path(download_path).mkdir(parents=True, exist_ok=True)
+            
+            # Use yt-dlp to download
+            # Format: best available quality with fallback
+            output_template = str(Path(download_path) / "%(title)s.%(ext)s")
+            
+            command = [
+                "yt-dlp",
+                "--format", "best",
+                "--output", output_template,
+                "--no-warnings",
+                url
+            ]
+            
+            logger.info(f"Starting download: {url} to {download_path}")
+            
+            # Run yt-dlp command
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=3600  # 1 hour timeout
+            )
+            
+            if result.returncode == 0:
+                logger.info(f"Successfully downloaded: {url}")
+                return True
+            else:
+                logger.error(f"Failed to download {url}: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            logger.error(f"Download timeout for {url}")
+            return False
+        except Exception as e:
+            logger.error(f"Error downloading {url}: {str(e)}")
+            return False
 
     def _on_listener_status_change(self, account_name: str, is_listening: bool) -> None:
         """Handle listener status change."""

@@ -107,6 +107,10 @@ class MainWindow(QMainWindow):
         self.stop_all_btn.clicked.connect(self._on_stop_all)
         control_layout.addWidget(self.stop_all_btn)
 
+        self.batch_download_btn = QPushButton("Batch Download")
+        self.batch_download_btn.clicked.connect(self._on_batch_download)
+        control_layout.addWidget(self.batch_download_btn)
+
         control_layout.addStretch()
 
         self.settings_btn = QPushButton("Settings")
@@ -250,6 +254,13 @@ class MainWindow(QMainWindow):
         """Stop all listeners."""
         self.app_controller.stop_all_listeners()
         self._refresh_account_table()
+
+    def _on_batch_download(self) -> None:
+        """Open batch download dialog."""
+        from src.gui.batch_download_dialog import BatchDownloadDialog
+
+        dialog = BatchDownloadDialog(self.app_controller, self)
+        dialog.exec_()
 
     def _on_edit_account(self, account_name: str) -> None:
         """Edit an account."""
