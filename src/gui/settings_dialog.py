@@ -33,6 +33,112 @@ from src.utils.config import Account
 
 logger = logging.getLogger(__name__)
 
+# Settings dialog stylesheet with colored buttons
+SETTINGS_STYLESHEET = """
+    QDialog {
+        background-color: #f5f5f5;
+    }
+    
+    QPushButton {
+        background-color: #2196F3;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-weight: bold;
+        font-size: 11px;
+        min-width: 60px;
+    }
+    
+    QPushButton:hover {
+        background-color: #1976D2;
+    }
+    
+    QPushButton:pressed {
+        background-color: #1565C0;
+    }
+    
+    QPushButton:disabled {
+        background-color: #bdbdbd;
+        color: #757575;
+    }
+    
+    QPushButton#okBtn {
+        background-color: #4CAF50;
+    }
+    
+    QPushButton#okBtn:hover {
+        background-color: #388E3C;
+    }
+    
+    QPushButton#cancelBtn {
+        background-color: #f44336;
+    }
+    
+    QPushButton#cancelBtn:hover {
+        background-color: #d32f2f;
+    }
+    
+    QPushButton#addBtn {
+        background-color: #2196F3;
+    }
+    
+    QPushButton#addBtn:hover {
+        background-color: #1976D2;
+    }
+    
+    QPushButton#removeBtn {
+        background-color: #FF9800;
+    }
+    
+    QPushButton#removeBtn:hover {
+        background-color: #F57C00;
+    }
+    
+    QPushButton#browseBtn {
+        background-color: #2196F3;
+    }
+    
+    QPushButton#browseBtn:hover {
+        background-color: #1976D2;
+    }
+    
+    QLineEdit {
+        background-color: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        padding: 6px;
+    }
+    
+    QListWidget {
+        background-color: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+    }
+    
+    QLabel {
+        color: #333;
+    }
+    
+    QCheckBox {
+        color: #333;
+    }
+    
+    QComboBox {
+        background-color: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        padding: 4px;
+    }
+    
+    QSpinBox {
+        background-color: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        padding: 4px;
+    }
+"""
+
 
 class SettingsDialog(QDialog):
     """Main settings dialog with tabs for different settings."""
@@ -49,6 +155,9 @@ class SettingsDialog(QDialog):
         self.app_controller = app_controller
         self.setWindowTitle("Settings")
         self.setGeometry(200, 200, 700, 500)
+        
+        # Apply stylesheet
+        self.setStyleSheet(SETTINGS_STYLESHEET)
 
         self._init_ui()
 
@@ -78,10 +187,12 @@ class SettingsDialog(QDialog):
         button_layout.addStretch()
 
         ok_btn = QPushButton("OK")
+        ok_btn.setObjectName("okBtn")
         ok_btn.clicked.connect(self.accept)
         button_layout.addWidget(ok_btn)
 
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("cancelBtn")
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 
@@ -108,6 +219,7 @@ class SettingsDialog(QDialog):
         button_layout = QHBoxLayout()
 
         add_btn = QPushButton("Add Account")
+        add_btn.setObjectName("addBtn")
         add_btn.clicked.connect(self._on_add_account)
         button_layout.addWidget(add_btn)
 
@@ -116,6 +228,7 @@ class SettingsDialog(QDialog):
         button_layout.addWidget(edit_btn)
 
         remove_btn = QPushButton("Remove")
+        remove_btn.setObjectName("removeBtn")
         remove_btn.clicked.connect(self._on_remove_account)
         button_layout.addWidget(remove_btn)
 
@@ -138,6 +251,7 @@ class SettingsDialog(QDialog):
         path_layout.addWidget(self.download_path_input)
 
         browse_btn = QPushButton("Browse")
+        browse_btn.setObjectName("browseBtn")
         browse_btn.clicked.connect(self._on_browse_download_path)
         path_layout.addWidget(browse_btn)
 
@@ -335,6 +449,9 @@ class AccountEditDialog(QDialog):
         title = "Add Account" if self.is_new else "Edit Account"
         self.setWindowTitle(title)
         self.setGeometry(200, 200, 500, 300)
+        
+        # Apply stylesheet
+        self.setStyleSheet(SETTINGS_STYLESHEET)
 
         self._init_ui()
 
@@ -412,6 +529,7 @@ class AccountEditDialog(QDialog):
         path_layout.addWidget(self.path_input)
 
         browse_btn = QPushButton("Browse")
+        browse_btn.setObjectName("browseBtn")
         browse_btn.clicked.connect(self._on_browse_path)
         path_layout.addWidget(browse_btn)
 
@@ -445,6 +563,7 @@ class AccountEditDialog(QDialog):
             cache_button_layout = QHBoxLayout()
             cache_button_layout.addStretch()
             clear_cache_btn = QPushButton("Clear Cache for This Account")
+            clear_cache_btn.setObjectName("removeBtn")
             clear_cache_btn.clicked.connect(self._on_clear_cache)
             cache_button_layout.addWidget(clear_cache_btn)
             layout.addLayout(cache_button_layout)
@@ -454,10 +573,12 @@ class AccountEditDialog(QDialog):
         button_layout.addStretch()
 
         ok_btn = QPushButton("OK")
+        ok_btn.setObjectName("okBtn")
         ok_btn.clicked.connect(self._on_accept)
         button_layout.addWidget(ok_btn)
 
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("cancelBtn")
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 

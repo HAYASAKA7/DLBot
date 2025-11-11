@@ -26,6 +26,97 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 logger = logging.getLogger(__name__)
 
+# Dialog stylesheet with rounded corners
+DIALOG_STYLESHEET = """
+    QDialog {
+        background-color: #f5f5f5;
+    }
+    
+    QPlainTextEdit {
+        background-color: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 8px;
+        font-family: monospace;
+    }
+    
+    QListWidget {
+        background-color: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        outline: none;
+    }
+    
+    QListWidget::item {
+        padding: 6px;
+        margin: 2px 0px;
+    }
+    
+    QListWidget::item:selected {
+        background-color: #e3f2fd;
+        color: #1976D2;
+    }
+    
+    QPushButton {
+        background-color: #2196F3;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-weight: bold;
+        font-size: 11px;
+    }
+    
+    QPushButton:hover {
+        background-color: #1976D2;
+    }
+    
+    QPushButton:pressed {
+        background-color: #1565C0;
+    }
+    
+    QPushButton#downloadBtn {
+        background-color: #4CAF50;
+    }
+    
+    QPushButton#downloadBtn:hover {
+        background-color: #388E3C;
+    }
+    
+    QPushButton#cancelBtn {
+        background-color: #f44336;
+    }
+    
+    QPushButton#cancelBtn:hover {
+        background-color: #d32f2f;
+    }
+    
+    QPushButton#removeBtn {
+        background-color: #FF9800;
+    }
+    
+    QPushButton#removeBtn:hover {
+        background-color: #F57C00;
+    }
+    
+    QProgressBar {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        text-align: center;
+        background-color: white;
+        height: 24px;
+    }
+    
+    QProgressBar::chunk {
+        background-color: #4CAF50;
+        border-radius: 4px;
+    }
+    
+    QLabel {
+        color: #333;
+    }
+"""
+
 
 class DownloadWorker(QThread):
     """Worker thread for batch downloading videos."""
@@ -113,6 +204,9 @@ class BatchDownloadDialog(QDialog):
         self.setWindowTitle("Batch Download Videos")
         self.setGeometry(200, 200, 700, 600)
         
+        # Apply stylesheet
+        self.setStyleSheet(DIALOG_STYLESHEET)
+        
         self._init_ui()
     
     def _init_ui(self) -> None:
@@ -154,6 +248,7 @@ class BatchDownloadDialog(QDialog):
         list_button_layout = QHBoxLayout()
         
         remove_btn = QPushButton("Remove Selected")
+        remove_btn.setObjectName("removeBtn")
         remove_btn.clicked.connect(self._on_remove_url)
         list_button_layout.addWidget(remove_btn)
         
@@ -204,11 +299,13 @@ class BatchDownloadDialog(QDialog):
         button_layout.addStretch()
         
         self.download_btn = QPushButton("Download")
+        self.download_btn.setObjectName("downloadBtn")
         self.download_btn.clicked.connect(self._on_download)
         self.download_btn.setMinimumWidth(100)
         button_layout.addWidget(self.download_btn)
         
         self.cancel_btn = QPushButton("Cancel Download")
+        self.cancel_btn.setObjectName("cancelBtn")
         self.cancel_btn.clicked.connect(self._on_cancel_download)
         self.cancel_btn.setMinimumWidth(120)
         self.cancel_btn.setEnabled(False)

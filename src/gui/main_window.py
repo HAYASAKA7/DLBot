@@ -27,6 +27,145 @@ from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
 
 logger = logging.getLogger(__name__)
 
+# Modern stylesheet with rounded corners
+STYLESHEET = """
+    QMainWindow {
+        background-color: #f5f5f5;
+    }
+    
+    QTableWidget {
+        background-color: white;
+        alternate-background-color: #f9f9f9;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        gridline-color: #e0e0e0;
+    }
+    
+    QTableWidget::item {
+        padding: 4px;
+    }
+    
+    QTableWidget::item:selected {
+        background-color: #e3f2fd;
+    }
+    
+    QHeaderView::section {
+        background-color: #f0f0f0;
+        color: #333;
+        padding: 5px;
+        border: none;
+        border-bottom: 1px solid #e0e0e0;
+        font-weight: bold;
+    }
+    
+    QPushButton {
+        background-color: #2196F3;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-weight: bold;
+        font-size: 11px;
+        min-width: 60px;
+    }
+    
+    QPushButton:hover {
+        background-color: #1976D2;
+    }
+    
+    QPushButton:pressed {
+        background-color: #1565C0;
+    }
+    
+    QPushButton:disabled {
+        background-color: #bdbdbd;
+        color: #757575;
+    }
+    
+    QPushButton#startBtn {
+        background-color: #4CAF50;
+    }
+    
+    QPushButton#startBtn:hover {
+        background-color: #388E3C;
+    }
+    
+    QPushButton#stopBtn {
+        background-color: #f44336;
+    }
+    
+    QPushButton#stopBtn:hover {
+        background-color: #d32f2f;
+    }
+    
+    QPushButton#editBtn {
+        background-color: #FF9800;
+    }
+    
+    QPushButton#editBtn:hover {
+        background-color: #F57C00;
+    }
+    
+    QPushButton#settingsBtn {
+        background-color: #FF9800;
+    }
+    
+    QPushButton#settingsBtn:hover {
+        background-color: #F57C00;
+    }
+    
+    QPushButton#batchDownloadBtn {
+        background-color: #4CAF50;
+    }
+    
+    QPushButton#batchDownloadBtn:hover {
+        background-color: #388E3C;
+    }
+    
+    QPushButton#startAllBtn {
+        background-color: #4CAF50;
+    }
+    
+    QPushButton#startAllBtn:hover {
+        background-color: #388E3C;
+    }
+    
+    QPushButton#stopAllBtn {
+        background-color: #f44336;
+    }
+    
+    QPushButton#stopAllBtn:hover {
+        background-color: #d32f2f;
+    }
+    
+    QLabel {
+        color: #333;
+    }
+    
+    QWidget {
+        background-color: #f5f5f5;
+    }
+    
+    QMenuBar {
+        background-color: white;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    
+    QMenuBar::item:selected {
+        background-color: #e3f2fd;
+    }
+    
+    QMenu {
+        background-color: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+    }
+    
+    QMenu::item:selected {
+        background-color: #e3f2fd;
+    }
+"""
+
 
 class SignalEmitter(QObject):
     """Signal emitter for thread-safe GUI updates."""
@@ -59,6 +198,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("DLBot - Content Listener & Downloader")
         self.setGeometry(100, 100, 1000, 600)
         
+        # Apply stylesheet
+        self.setStyleSheet(STYLESHEET)
+        
         # Set window icon
         icon_path = Path(__file__).parent.parent.parent / "DLBot.jpg"
         if icon_path.exists():
@@ -89,31 +231,39 @@ class MainWindow(QMainWindow):
         self.account_table.setHorizontalHeaderLabels([
             "Account", "Platform", "Status", "Last Check", "Actions"
         ])
-        self.account_table.setColumnWidth(0, 200)
+        self.account_table.setColumnWidth(0, 180)
         self.account_table.setColumnWidth(1, 100)
         self.account_table.setColumnWidth(2, 100)
-        self.account_table.setColumnWidth(3, 150)
-        self.account_table.setColumnWidth(4, 150)
-        main_layout.addWidget(self.account_table)
+        self.account_table.setColumnWidth(3, 120)
+        self.account_table.setColumnWidth(4, 200)
+        self.account_table.horizontalHeader().setStretchLastSection(True)
+        # Disable row selection - make table non-selectable
+        self.account_table.setSelectionMode(QTableWidget.NoSelection)
+        self.account_table.setFocusPolicy(Qt.NoFocus)
+        main_layout.addWidget(self.account_table, 1)  # Give table stretch factor
 
         # Control buttons layout
         control_layout = QHBoxLayout()
 
         self.start_all_btn = QPushButton("Start All")
+        self.start_all_btn.setObjectName("startAllBtn")
         self.start_all_btn.clicked.connect(self._on_start_all)
         control_layout.addWidget(self.start_all_btn)
 
         self.stop_all_btn = QPushButton("Stop All")
+        self.stop_all_btn.setObjectName("stopAllBtn")
         self.stop_all_btn.clicked.connect(self._on_stop_all)
         control_layout.addWidget(self.stop_all_btn)
 
         self.batch_download_btn = QPushButton("Batch Download")
+        self.batch_download_btn.setObjectName("batchDownloadBtn")
         self.batch_download_btn.clicked.connect(self._on_batch_download)
         control_layout.addWidget(self.batch_download_btn)
 
         control_layout.addStretch()
 
         self.settings_btn = QPushButton("Settings")
+        self.settings_btn.setObjectName("settingsBtn")
         self.settings_btn.clicked.connect(self._on_settings)
         control_layout.addWidget(self.settings_btn)
 
@@ -205,17 +355,22 @@ class MainWindow(QMainWindow):
             # Action buttons
             action_widget = QWidget()
             action_layout = QHBoxLayout()
-            action_layout.setContentsMargins(0, 0, 0, 0)
+            action_layout.setContentsMargins(4, 2, 4, 2)
+            action_layout.setSpacing(6)
 
             # Check if this is a Bilibili account
             is_bilibili = account.platform.lower() == "bilibili"
 
             if is_listening:
                 stop_btn = QPushButton("Stop")
+                stop_btn.setObjectName("stopBtn")
+                stop_btn.setMaximumWidth(70)
                 stop_btn.clicked.connect(lambda checked, name=account.name: self._on_stop_account(name))
                 action_layout.addWidget(stop_btn)
             else:
                 start_btn = QPushButton("Start")
+                start_btn.setObjectName("startBtn")
+                start_btn.setMaximumWidth(70)
                 # Disable start button for Bilibili accounts
                 if is_bilibili:
                     start_btn.setEnabled(False)
@@ -225,6 +380,8 @@ class MainWindow(QMainWindow):
                 action_layout.addWidget(start_btn)
 
             edit_btn = QPushButton("Edit")
+            edit_btn.setObjectName("editBtn")
+            edit_btn.setMaximumWidth(70)
             edit_btn.clicked.connect(lambda checked, name=account.name: self._on_edit_account(name))
             action_layout.addWidget(edit_btn)
 
