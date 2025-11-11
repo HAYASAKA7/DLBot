@@ -203,13 +203,21 @@ class MainWindow(QMainWindow):
             action_layout = QHBoxLayout()
             action_layout.setContentsMargins(0, 0, 0, 0)
 
+            # Check if this is a Bilibili account
+            is_bilibili = account.platform.lower() == "bilibili"
+
             if is_listening:
                 stop_btn = QPushButton("Stop")
                 stop_btn.clicked.connect(lambda checked, name=account.name: self._on_stop_account(name))
                 action_layout.addWidget(stop_btn)
             else:
                 start_btn = QPushButton("Start")
-                start_btn.clicked.connect(lambda checked, name=account.name: self._on_start_account(name))
+                # Disable start button for Bilibili accounts
+                if is_bilibili:
+                    start_btn.setEnabled(False)
+                    start_btn.setToolTip("Bilibili support is currently disabled.")
+                else:
+                    start_btn.clicked.connect(lambda checked, name=account.name: self._on_start_account(name))
                 action_layout.addWidget(start_btn)
 
             edit_btn = QPushButton("Edit")
@@ -230,8 +238,12 @@ class MainWindow(QMainWindow):
         self._refresh_account_table()
 
     def _on_start_all(self) -> None:
-        """Start all listeners."""
-        self.app_controller.start_all_listeners()
+        """Start all listeners except Bilibili."""
+        accounts = self.app_controller.get_all_accounts()
+        # Start only non-Bilibili accounts
+        for account in accounts:
+            if account.platform.lower() != "bilibili":
+                self.app_controller.start_listener(account.name)
         self._refresh_account_table()
 
     def _on_stop_all(self) -> None:

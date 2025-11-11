@@ -25,6 +25,7 @@ from PyQt5.QtWidgets import (
     QListWidgetItem,
     QInputDialog,
     QFormLayout,
+    QPlainTextEdit,
 )
 from PyQt5.QtCore import Qt
 
@@ -355,6 +356,14 @@ class AccountEditDialog(QDialog):
         # Platform
         self.platform_combo = QComboBox()
         self.platform_combo.addItems(["YouTube", "Bilibili"])
+        
+        # Disable Bilibili option - not currently supported
+        bilibili_index = self.platform_combo.findText("Bilibili")
+        if bilibili_index >= 0:
+            model = self.platform_combo.model()
+            item = model.item(bilibili_index)
+            item.setEnabled(False)
+        
         if not self.is_new:
             account = self.app_controller.config_manager.get_account(self.account_name)
             if account:
@@ -369,6 +378,25 @@ class AccountEditDialog(QDialog):
             if account:
                 self.url_input.setText(account.url)
         form_layout.addRow("Account URL:", self.url_input)
+
+        # Bilibili Cookie (only shown for Bilibili accounts)
+        self.cookie_label = QLabel("Bilibili SESSDATA Cookie:")
+        self.cookie_input = QPlainTextEdit()
+        self.cookie_input.setPlaceholderText("Paste your SESSDATA cookie here (required for Bilibili accounts)")
+        self.cookie_input.setMaximumHeight(80)
+        if not self.is_new:
+            account = self.app_controller.config_manager.get_account(self.account_name)
+            if account and account.bilibili_cookie:
+                self.cookie_input.setPlainText(account.bilibili_cookie)
+        
+        # Initially hide cookie field, show it when Bilibili is selected
+        self.cookie_label.setVisible(False)
+        self.cookie_input.setVisible(False)
+        form_layout.addRow(self.cookie_label, self.cookie_input)
+        
+        # Connect platform combo to show/hide cookie field
+        self.platform_combo.currentTextChanged.connect(self._on_platform_changed)
+        self._on_platform_changed(self.platform_combo.currentText())
 
         # Download path
         path_layout = QHBoxLayout()
@@ -470,12 +498,19 @@ class AccountEditDialog(QDialog):
                     f"Failed to clear cache for '{self.account_name}'."
                 )
 
+    def _on_platform_changed(self, platform_text: str) -> None:
+        """Show/hide Bilibili cookie field based on selected platform."""
+        is_bilibili = platform_text.lower() == "bilibili"
+        self.cookie_label.setVisible(is_bilibili)
+        self.cookie_input.setVisible(is_bilibili)
+
     def _on_accept(self) -> None:
         """Accept and save account."""
         name = self.name_input.text().strip()
         platform = self.platform_combo.currentText().lower()
         url = self.url_input.text().strip()
         download_path = self.path_input.text().strip()
+        cookie = self.cookie_input.toPlainText().strip()
 
         # Validation
         if not name:
@@ -489,6 +524,32 @@ class AccountEditDialog(QDialog):
         if not download_path:
             QMessageBox.warning(self, "Validation Error", "Download path is required.")
             return
+        
+        # Check if Bilibili URL is pasted
+        if "bilibili.com" in url.lower() or "b23.tv" in url.lower():
+            QMessageBox.warning(
+                self,
+                "Bilibili Not Supported",
+                "Bilibili support is currently disabled.\n\n"
+                "We apologize for the inconvenience. Bilibili platform support is under development.\n"
+                "Please use YouTube or other supported platforms instead."
+            )
+            return
+        
+        # Bilibili cookie is required for Bilibili accounts
+        if platform == "bilibili" and not cookie:
+            QMessageBox.warning(
+                self, 
+                "Validation Error", 
+                "Bilibili SESSDATA cookie is required for Bilibili accounts.\n\n"
+                "How to get your SESSDATA cookie:\n"
+                "1. Go to bilibili.com and log in\n"
+                "2. Open DevTools (F12)\n"
+                "3. Go to Application → Cookies → bilibili.com\n"
+                "4. Find the 'SESSDATA' cookie and copy its value\n"
+                "5. Paste it here"
+            )
+            return
 
         try:
             account = Account(
@@ -498,6 +559,7 @@ class AccountEditDialog(QDialog):
                 download_path=download_path,
                 enabled=self.enabled_check.isChecked(),
                 auto_download_count=self.auto_download_count_spin.value(),
+                bilibili_cookie=cookie if platform == "bilibili" else "",
             )
 
             if self.is_new:

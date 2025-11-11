@@ -7,6 +7,8 @@ import logging
 import threading
 import time
 import json
+import requests
+import re
 from typing import Callable, Optional, Dict
 from pathlib import Path
 import yt_dlp
@@ -28,6 +30,7 @@ class Listener:
         download_path: str,
         check_interval: int = 300,  # 5 minutes
         auto_download_count: int = 1,  # Number of new videos to auto-download (1-5)
+        bilibili_cookie: str = "",  # Bilibili SESSDATA cookie for authentication
         on_status_change: Optional[Callable] = None,
         on_video_found: Optional[Callable] = None,
         on_download_complete: Optional[Callable] = None,
@@ -41,6 +44,7 @@ class Listener:
             download_path: Directory to download videos
             check_interval: Seconds between checks (default 300)
             auto_download_count: Number of new videos to auto-download (1-5, default 1)
+            bilibili_cookie: Bilibili SESSDATA cookie (required for Bilibili accounts)
             on_status_change: Callback when listener status changes
             on_video_found: Callback when new video is found
             on_download_complete: Callback when download finishes
@@ -50,6 +54,7 @@ class Listener:
         self.download_path = Path(download_path)
         self.check_interval = check_interval
         self.auto_download_count = auto_download_count
+        self.bilibili_cookie = bilibili_cookie
         self.on_status_change = on_status_change
         self.on_video_found = on_video_found
         self.on_download_complete = on_download_complete
@@ -189,15 +194,36 @@ class Listener:
     def _check_for_new_content(self) -> None:
         """Check for new videos or live streams from the account."""
         try:
+            # Detect if this is a Bilibili URL
+            is_bilibili = "bilibili.com" in self.account_url or "b23.tv" in self.account_url
+            
+            # For Bilibili with cookie, use the official API
+            if is_bilibili and self.bilibili_cookie:
+                self._check_bilibili_api()
+                return
+            
+            # Otherwise use yt-dlp for YouTube and Bilibili without cookie
             ydl_opts = {
                 "quiet": True,
                 "no_warnings": True,
                 "extract_flat": True,  # Don't download, just get info
                 "skip_download": True,
+                "socket_timeout": 30,
             }
+            
+            # Add Bilibili-specific options (use web scraping for search, not API)
+            if is_bilibili:
+                ydl_opts.update({
+                    "http_headers": {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer": "https://search.bilibili.com/",
+                    },
+                    "retries": {"max_retries": 3, "backoff_factor": 1.5},
+                })
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # For YouTube channels: add /videos to get video list
+                # For Bilibili: convert to search URL
                 url = self._prepare_url(self.account_url)
 
                 try:
@@ -209,9 +235,20 @@ class Listener:
                 if "entries" not in info or not info["entries"]:
                     return
 
+                # For Bilibili search results, filter out non-video content
+                # Video entries have 'ext' field (content type)
+                entries = info["entries"]
+                if is_bilibili:
+                    # Filter to only include videos (vt=2 is video type in Bilibili search)
+                    entries = [e for e in entries if e and e.get("ext") == "mp4" or (e.get("_type") == "video")]
+                
+                if not entries:
+                    logger.debug(f"No video entries found for {self.account_name} after filtering")
+                    return
+
                 # Check first N videos/streams (based on auto_download_count)
                 new_videos_found = False
-                for entry in info["entries"][: self.auto_download_count]:
+                for entry in entries[: self.auto_download_count]:
                     if not entry:
                         continue
 
@@ -256,46 +293,361 @@ class Listener:
             logger.error(f"Error in _check_for_new_content for {self.account_name}: {e}")
 
     def _prepare_url(self, url: str) -> str:
-        """Prepare URL for extraction (add /videos for YouTube channels)."""
+        """Prepare URL for extraction (handle YouTube and Bilibili differently)."""
+        # For YouTube: add /videos to get video list
         if "youtube.com" in url or "youtu.be" in url:
             if "/videos" not in url and "/live" not in url:
                 if not url.endswith("/"):
                     url += "/"
                 url += "videos"
+        
+        # For Bilibili: convert to search URL if it's a channel/user URL
+        if "bilibili.com" in url or "b23.tv" in url:
+            # If it's a channel/user page, convert to search with the channel name
+            if "/space/" in url or "mid=" in url:
+                # Extract channel/user identifier and convert to search
+                url = self._convert_bilibili_to_search(url)
+        
         return url
+    
+    def _convert_bilibili_to_search(self, url: str) -> str:
+        """Convert Bilibili channel URL to search URL sorted by upload time."""
+        try:
+            # Try to extract channel name from the account_url if it's already provided
+            # For now, we'll use yt-dlp to get the channel name first
+            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
+                info = ydl.extract_info(url, download=False)
+                uploader = info.get("uploader", "")
+                
+                if uploader:
+                    # Create search URL with channel name, sorted by publish date
+                    from urllib.parse import quote
+                    search_url = f"https://search.bilibili.com/all?keyword={quote(uploader)}&from_source=webtop_search&order=pubdate&vt=35004072"
+                    logger.info(f"Converted Bilibili channel to search URL: {search_url}")
+                    return search_url
+        except Exception as e:
+            logger.warning(f"Could not convert Bilibili URL to search: {e}")
+        
+        return url
+    
+    def _extract_host_mid(self, url: str) -> Optional[str]:
+        """Extract Bilibili user ID (mid) from URL."""
+        logger.debug(f"[Extract Mid] Attempting to extract user ID from: {url}")
+        
+        try:
+            # Try to extract mid from various Bilibili URL formats FIRST
+            # Format 1: space.bilibili.com/123456 or bilibili.com/space/123456
+            logger.debug(f"[Extract Mid] Trying regex pattern: space\\.bilibili\\.com/(\\d+)")
+            match = re.search(r'space\.bilibili\.com/(\d+)', url)
+            if match:
+                mid = match.group(1)
+                logger.info(f"[Extract Mid] Successfully extracted mid from URL: {mid}")
+                return mid
+            
+            # Format 2: /space/123456 (with or without query params)
+            logger.debug(f"[Extract Mid] Trying regex pattern: /space/(\\d+)")
+            match = re.search(r'/space/(\d+)', url)
+            if match:
+                mid = match.group(1)
+                logger.info(f"[Extract Mid] Successfully extracted mid from URL: {mid}")
+                return mid
+            
+            # Format 3: mid=123456
+            logger.debug(f"[Extract Mid] Trying regex pattern: [?&]mid=(\\d+)")
+            match = re.search(r'[?&]mid=(\d+)', url)
+            if match:
+                mid = match.group(1)
+                logger.info(f"[Extract Mid] Successfully extracted mid from query param: {mid}")
+                return mid
+            
+            logger.warning(f"[Extract Mid] Could not extract mid using regex patterns from {url}")
+            logger.debug(f"[Extract Mid] Will NOT attempt yt-dlp extraction due to rate limiting")
+            
+        except Exception as e:
+            logger.error(f"[Extract Mid] Error during extraction: {e}")
+        
+        logger.warning(f"[Extract Mid] Failed to extract Bilibili user ID from {url}")
+        return None
+    
+    def _check_bilibili_api(self) -> None:
+        """Check for new videos using Bilibili's official API."""
+        try:
+            # Extract user ID from URL
+            host_mid = self._extract_host_mid(self.account_url)
+            if not host_mid:
+                logger.error(f"Could not extract Bilibili user ID from {self.account_url}")
+                return
+            
+            logger.info(f"[Bilibili API] Account: {self.account_name}, User ID: {host_mid}")
+            
+            # Build API URL
+            api_url = f"https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid={host_mid}"
+            
+            # Prepare headers with cookie
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": f"https://space.bilibili.com/{host_mid}",
+                "Cookie": f"SESSDATA={self.bilibili_cookie}",
+            }
+            
+            logger.info(f"[Bilibili API] Fetching: {api_url}")
+            logger.debug(f"[Bilibili API] Headers: {headers}")
+            
+            response = requests.get(api_url, headers=headers, timeout=10)
+            logger.info(f"[Bilibili API] Response Status: {response.status_code}")
+            
+            response.raise_for_status()
+            
+            data = response.json()
+            logger.info(f"[Bilibili API] Response Code: {data.get('code')}, Message: {data.get('message', 'N/A')}")
+            logger.debug(f"[Bilibili API] Full Response: {json.dumps(data, indent=2, ensure_ascii=False)[:500]}...")  # Log first 500 chars
+            
+            # Check API response
+            if data.get("code") != 0:
+                logger.warning(f"Bilibili API error for {self.account_name}: {data.get('message', 'Unknown error')}")
+                return
+            
+            # Extract items from response
+            items = data.get("data", {}).get("items", [])
+            logger.info(f"[Bilibili API] Found {len(items)} items for {self.account_name}")
+            
+            if not items:
+                logger.debug(f"No items found for {self.account_name}")
+                return
+            
+            # Filter for video uploads only (pub_action == "投稿了视频")
+            new_videos_found = False
+            processed_count = 0
+            
+            for idx, item in enumerate(items):
+                if processed_count >= self.auto_download_count:
+                    break
+                
+                logger.debug(f"[Bilibili API] Processing item {idx+1}/{len(items)}")
+                
+                # Check if this is a video upload item
+                modules = item.get("modules", {})
+                if not modules:
+                    logger.debug(f"[Bilibili API] Item {idx+1}: No modules found")
+                    continue
+                
+                # Get module_author to check pub_action
+                module_author = modules.get("module_author", {})
+                if not module_author:
+                    logger.debug(f"[Bilibili API] Item {idx+1}: No module_author found")
+                    continue
+                
+                # CRITICAL: Only process items with pub_action == "投稿了视频" (video upload)
+                pub_action = module_author.get("pub_action", "")
+                logger.debug(f"[Bilibili API] Item {idx+1}: pub_action = '{pub_action}'")
+                
+                if pub_action != "投稿了视频":
+                    logger.debug(f"[Bilibili API] Item {idx+1}: Skipping - not a video upload (pub_action: {pub_action})")
+                    continue
+                
+                # Get video info from module_dynamic.major.archive (NOT from module_author)
+                module_dynamic = modules.get("module_dynamic", {})
+                if not module_dynamic:
+                    logger.debug(f"[Bilibili API] Item {idx+1}: No module_dynamic found")
+                    continue
+                
+                major = module_dynamic.get("major", {})
+                if not major or major.get("type") != "MAJOR_TYPE_ARCHIVE":
+                    logger.debug(f"[Bilibili API] Item {idx+1}: Not an archive type or missing major data")
+                    continue
+                
+                archive = major.get("archive", {})
+                if not archive:
+                    logger.debug(f"[Bilibili API] Item {idx+1}: No archive data found")
+                    continue
+                
+                # Extract video info from archive
+                video_id = archive.get("bvid", "")
+                title = archive.get("title", "Unknown")
+                video_jump_url = archive.get("jump_url", "")
+                
+                if not video_id or not video_jump_url:
+                    logger.debug(f"[Bilibili API] Item {idx+1}: Missing BVID or jump_url in archive")
+                    continue
+                
+                # Clean up video URL (remove leading //)
+                if video_jump_url.startswith("//"):
+                    video_jump_url = "https:" + video_jump_url
+                elif not video_jump_url.startswith("http"):
+                    video_jump_url = "https://" + video_jump_url
+                
+                logger.debug(f"[Bilibili API] Item {idx+1}: Found archive - BVID: {video_id}, Title: {title}, URL: {video_jump_url}")
+                
+                logger.info(f"[Bilibili API] Item {idx+1}: Found video upload - ID: {video_id}, Title: {title}")
+                
+                # Skip if we've already seen this
+                if video_id in self._last_videos:
+                    logger.debug(f"[Bilibili API] Item {idx+1}: {video_id} already seen, skipping")
+                    continue
+                
+                # Skip if file already exists in destination folder
+                if self._file_exists_in_destination(video_id):
+                    logger.info(f"[Bilibili API] File already exists in destination: {title}")
+                    self._last_videos[video_id] = title
+                    continue
+                
+                # Mark as seen and prepare to download
+                self._last_videos[video_id] = title
+                new_videos_found = True
+                processed_count += 1
+                
+                logger.info(f"[Bilibili API] Found new video: {title} (ID: {video_id})")
+                
+                if self.on_video_found:
+                    self.on_video_found(
+                        self.account_name,
+                        video_id,
+                        title,
+                        False,  # Not live
+                        video_jump_url,
+                    )
+                
+                # Automatically download
+                if new_videos_found:
+                    logger.info(f"[Bilibili API] Starting download for: {title}")
+                    self._download_content(video_jump_url, title)
+            
+            # Save cache
+            self._save_cache()
+            logger.info(f"[Bilibili API] Completed check for {self.account_name}, processed {processed_count} new videos")
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"[Bilibili API] Request error for {self.account_name}: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"[Bilibili API] JSON decode error for {self.account_name}: {e}")
+        except Exception as e:
+            logger.error(f"[Bilibili API] Unexpected error for {self.account_name}: {e}", exc_info=True)
 
     def _download_content(self, video_url: str, title: str) -> None:
-        """Download video/stream content."""
+        """Download video/stream content with quality fallback for premium content."""
         try:
             logger.info(f"Starting download: {title}")
 
             # Sanitize the title for use in filename (remove invalid Windows characters)
             sanitized_title = self._sanitize_filename(title)
+            
+            # Detect if this is a Bilibili URL
+            is_bilibili = "bilibili.com" in video_url or "b23.tv" in video_url
 
-            ydl_opts = {
-                "format": "bestvideo+bestaudio/best",  # Highest quality: best video + best audio
-                "postprocessors": [
-                    {
-                        "key": "FFmpegMerger",
-                    },
-                ],
-                "outtmpl": str(
-                    self.download_path / f"{self.account_name}_{sanitized_title}_%(id)s.%(ext)s"
-                ),
-                "quiet": False,
-                "no_warnings": False,
-                "progress_hooks": [self._progress_hook],
-            }
+            # Bilibili separates video and audio streams
+            # Video IDs: 30011, 30016 (360p), 30033, 30032 (480p), 30066, 30064 (720p), 30077, 30080 (1080p)
+            # Audio IDs: 30216, 30232, 30280 (different bitrates)
+            # We need to download video + audio separately and merge
+            
+            quality_levels = [
+                "30080+30216",  # 1080p video + audio (best)
+                "30077+30216",  # 1080p hevc + audio
+                "30064+30216",  # 720p video + audio
+                "30066+30216",  # 720p hevc + audio
+                "30032+30216",  # 480p video + audio
+                "30033+30216",  # 480p hevc + audio
+                "30016+30216",  # 360p video + audio
+                "30011+30216",  # 360p hevc + audio
+                "30232",        # Audio only (fallback)
+                "best",         # Catch-all
+            ]
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([video_url])
+            last_error = None
+            
+            for quality_level_idx, format_str in enumerate(quality_levels):
+                try:
+                    logger.info(f"[Download] Attempting quality level {quality_level_idx}: {format_str}")
+                    
+                    ydl_opts = {
+                        "format": format_str,
+                        "postprocessors": [
+                            {
+                                "key": "FFmpegMerger",
+                            },
+                        ],
+                        "outtmpl": str(
+                            self.download_path / f"{self.account_name}_{sanitized_title}_%(id)s.%(ext)s"
+                        ),
+                        "quiet": False,
+                        "no_warnings": False,
+                        "progress_hooks": [self._progress_hook],
+                        "socket_timeout": 30,
+                    }
+                    
+                    # Add Bilibili-specific options for download (web scraping)
+                    if is_bilibili:
+                        ydl_opts.update({
+                            "http_headers": {
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                                "Referer": "https://search.bilibili.com/",
+                            },
+                            "retries": {"max_retries": 3, "backoff_factor": 1.5},
+                            "cookies_from_browser": ("chrome", None),  # Extract cookies from Chrome browser for Bilibili authentication
+                        })
 
-            logger.info(f"Completed download: {title}")
-            if self.on_download_complete:
-                self.on_download_complete(self.account_name, title)
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([video_url])
+                    
+                    # Success! Download completed
+                    logger.info(f"Completed download: {title} at quality level {quality_level_idx}")
+                    if self.on_download_complete:
+                        self.on_download_complete(self.account_name, title)
+                    return
+                    
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    last_error = e
+                    
+                    # Check if error is premium/membership related
+                    is_premium_error = any(keyword in error_msg for keyword in [
+                        "premium",
+                        "membership",
+                        "vip",
+                        "大会员",
+                        "需要大会员",
+                        "requires",
+                        "high quality",
+                        "permission denied",
+                        "access denied",
+                        "不可用",
+                        "无权限",
+                        "missing",
+                        "are missing",
+                    ])
+                    
+                    # Check if error is format not available (video format mismatch)
+                    is_format_unavailable = any(keyword in error_msg for keyword in [
+                        "format is not available",
+                        "requested format is not available",
+                        "no video format found",
+                        "video format not found",
+                        "not available in any format",
+                    ])
+                    
+                    # Retry with next quality level if premium/format error and more levels available
+                    if is_bilibili and (is_premium_error or is_format_unavailable) and quality_level_idx < len(quality_levels) - 1:
+                        if is_premium_error:
+                            logger.warning(f"[Download] Quality level {quality_level_idx} requires premium membership")
+                        if is_format_unavailable:
+                            logger.warning(f"[Download] Quality level {quality_level_idx} format not available for this video")
+                        logger.warning(f"[Download] Error: {e}")
+                        logger.info(f"[Download] Downgrading quality and retrying...")
+                        continue  # Try next quality level
+                    else:
+                        # Not a premium error, or no more quality levels to try
+                        logger.error(f"[Download] Failed at quality level {quality_level_idx}: {e}")
+                        if quality_level_idx < len(quality_levels) - 1:
+                            logger.info(f"[Download] Retrying with lower quality...")
+                            continue
+                        else:
+                            # This was the last quality level
+                            raise
+            
+            # Should not reach here, but just in case
+            raise last_error if last_error else Exception("Download failed for unknown reason")
 
         except Exception as e:
-            logger.error(f"Error downloading {title}: {e}")
+            logger.error(f"Error downloading {title}: {e}", exc_info=True)
 
     def _sanitize_filename(self, filename: str) -> str:
         """Sanitize filename by removing or replacing invalid Windows characters."""
@@ -341,6 +693,7 @@ class ListenerManager:
         download_path: str,
         check_interval: int = 300,
         auto_download_count: int = 1,
+        bilibili_cookie: str = "",
         on_status_change: Optional[Callable] = None,
         on_video_found: Optional[Callable] = None,
         on_download_complete: Optional[Callable] = None,
@@ -357,6 +710,7 @@ class ListenerManager:
                 download_path=download_path,
                 check_interval=check_interval,
                 auto_download_count=auto_download_count,
+                bilibili_cookie=bilibili_cookie,
                 on_status_change=on_status_change,
                 on_video_found=on_video_found,
                 on_download_complete=on_download_complete,
