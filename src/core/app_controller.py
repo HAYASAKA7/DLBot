@@ -5,6 +5,7 @@ Manages the overall application state and lifecycle.
 
 import logging
 import subprocess
+import sys
 from typing import Dict, Optional
 from pathlib import Path
 
@@ -160,12 +161,21 @@ class AppController:
             
             logger.info(f"Starting download: {url} to {download_path}")
             
+            # Configure subprocess to hide window on Windows
+            startup_info = None
+            if sys.platform == 'win32':
+                # Hide console window on Windows
+                startup_info = subprocess.STARTUPINFO()
+                startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startup_info.wShowWindow = subprocess.SW_HIDE
+            
             # Run yt-dlp command
             result = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
-                timeout=3600  # 1 hour timeout
+                timeout=3600,  # 1 hour timeout
+                startupinfo=startup_info  # Hide window on Windows
             )
             
             if result.returncode == 0:
