@@ -435,20 +435,25 @@ class Listener:
                 entries = info["entries"]
                 logger.info(f"[Lives Check] Found {len(entries)} total entries for {self.account_name}")
                 
-                # Debug: Log first few entries to understand data structure
-                for idx, entry in enumerate(entries[:3]):
-                    if entry:
-                        logger.debug(f"[Lives Check] Sample entry {idx}: id={entry.get('id')}, title={entry.get('title')}, is_live={entry.get('is_live')}, duration={entry.get('duration')}")
+                # NOTE: YouTube's /streams endpoint returns content from the Streams tab
+                # Filter out upcoming/scheduled streams that haven't started yet
+                # Scheduled streams have duration=None (no content to download yet)
+                live_entries = []
+                for entry in entries:
+                    if not entry:
+                        continue
+                    
+                    duration = entry.get("duration")
+                    title = entry.get("title", "Unknown")
+                    
+                    # Skip scheduled/upcoming streams that have no duration (no content yet)
+                    if duration is None:
+                        logger.info(f"[Lives Check] Skipping scheduled/upcoming stream (duration=None): {title}")
+                        continue
+                    
+                    live_entries.append(entry)
                 
-                # Filter to only live streams (is_live=True)
-                # NOTE: YouTube's /streams endpoint returns both current streams and past streams (VODs)
-                # We need to filter for currently live or recently recorded streams
-                live_entries = [e for e in entries if e and e.get("is_live", False)]
-                
-                logger.info(f"[Lives Check] Found {len(live_entries)} live entries after filtering for {self.account_name}")
-                if live_entries and len(live_entries) < 5:
-                    for entry in live_entries:
-                        logger.debug(f"[Lives Check] Live entry: {entry.get('title')} (is_live={entry.get('is_live')})")
+                logger.info(f"[Lives Check] Found {len(live_entries)} stream entries after filtering upcoming for {self.account_name}")
                 
                 if not live_entries:
                     logger.info(f"[Lives Check] No live stream entries found for {self.account_name}")
@@ -534,13 +539,21 @@ class Listener:
 
     def _prepare_url(self, url: str, is_live: bool = False) -> str:
         """Prepare URL for extraction (handle YouTube and Bilibili differently)."""
-        # For YouTube: add /videos to get video list, or /streams for live streams
+        # For YouTube: add /videos to get video list, or search for Streams playlist for live content
         if "youtube.com" in url or "youtu.be" in url:
-            if "/videos" not in url and "/streams" not in url and "/live" not in url:
+            if "/videos" not in url and "/streams" not in url and "/live" not in url and "playlist" not in url:
                 if not url.endswith("/"):
                     url += "/"
-                # Use /streams endpoint for live streams, /videos for regular videos
-                url += "streams" if is_live else "videos"
+                
+                if is_live:
+                    # For live content, try to find a "Streams" or "Premieres" playlist
+                    # Many YouTubers organize livestream archives in a playlist
+                    # For now, just append /streams tab - it may contain livestream replays
+                    # Users can manually set up a "Streams" playlist if they want more control
+                    url += "streams"
+                else:
+                    # For regular videos, use /videos endpoint
+                    url += "videos"
         
         # For Bilibili: convert to search URL if it's a channel/user URL
         if "bilibili.com" in url or "b23.tv" in url:
