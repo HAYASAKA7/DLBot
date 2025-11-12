@@ -22,8 +22,12 @@ class Account:
     download_path: str
     enabled: bool = True
     check_interval: int = 300  # seconds
-    auto_download_count: int = 1  # Number of new videos to auto-download (1-5)
+    auto_download_count: int = 1  # Number of new videos to auto-download (1-5) - DEPRECATED, use auto_download_videos_count
     bilibili_cookie: str = ""  # Bilibili SESSDATA cookie (required for Bilibili accounts)
+    auto_download_videos: bool = True  # Auto-download new videos
+    auto_download_lives: bool = False  # Auto-download live records
+    auto_download_videos_count: int = 1  # Number of new videos to auto-download (1-5)
+    auto_download_lives_count: int = 1  # Number of live records to auto-download (1-5)
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""

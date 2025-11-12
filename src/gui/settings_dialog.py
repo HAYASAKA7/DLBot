@@ -535,7 +535,7 @@ class AccountEditDialog(QDialog):
 
         form_layout.addRow("Download Path:", path_layout)
 
-        # Auto-download count
+        # Auto-download count (kept for backward compatibility, but hidden)
         self.auto_download_count_spin = QSpinBox()
         self.auto_download_count_spin.setMinimum(1)
         self.auto_download_count_spin.setMaximum(5)
@@ -544,7 +544,6 @@ class AccountEditDialog(QDialog):
             account = self.app_controller.config_manager.get_account(self.account_name)
             if account:
                 self.auto_download_count_spin.setValue(account.auto_download_count)
-        form_layout.addRow("Auto-download Count:", self.auto_download_count_spin)
 
         # Enabled checkbox
         self.enabled_check = QCheckBox("Enable listening for this account")
@@ -555,6 +554,51 @@ class AccountEditDialog(QDialog):
         else:
             self.enabled_check.setChecked(True)
         form_layout.addRow("", self.enabled_check)
+
+        # Auto-download options
+        auto_download_label = QLabel("Auto-Download Settings:")
+        auto_download_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        form_layout.addRow(auto_download_label)
+
+        # Auto-download new videos checkbox
+        self.auto_download_videos_check = QCheckBox("Auto-download new videos")
+        self.auto_download_videos_check.setChecked(True)
+        if not self.is_new:
+            account = self.app_controller.config_manager.get_account(self.account_name)
+            if account:
+                self.auto_download_videos_check.setChecked(account.auto_download_videos)
+        form_layout.addRow("", self.auto_download_videos_check)
+
+        # Auto-download videos count
+        self.auto_download_videos_count_spin = QSpinBox()
+        self.auto_download_videos_count_spin.setMinimum(1)
+        self.auto_download_videos_count_spin.setMaximum(5)
+        self.auto_download_videos_count_spin.setValue(1)
+        if not self.is_new:
+            account = self.app_controller.config_manager.get_account(self.account_name)
+            if account:
+                self.auto_download_videos_count_spin.setValue(account.auto_download_videos_count)
+        form_layout.addRow("  Videos to download:", self.auto_download_videos_count_spin)
+
+        # Auto-download live records checkbox
+        self.auto_download_lives_check = QCheckBox("Auto-download live records")
+        self.auto_download_lives_check.setChecked(False)
+        if not self.is_new:
+            account = self.app_controller.config_manager.get_account(self.account_name)
+            if account:
+                self.auto_download_lives_check.setChecked(account.auto_download_lives)
+        form_layout.addRow("", self.auto_download_lives_check)
+
+        # Auto-download lives count
+        self.auto_download_lives_count_spin = QSpinBox()
+        self.auto_download_lives_count_spin.setMinimum(1)
+        self.auto_download_lives_count_spin.setMaximum(5)
+        self.auto_download_lives_count_spin.setValue(1)
+        if not self.is_new:
+            account = self.app_controller.config_manager.get_account(self.account_name)
+            if account:
+                self.auto_download_lives_count_spin.setValue(account.auto_download_lives_count)
+        form_layout.addRow("  Lives to download:", self.auto_download_lives_count_spin)
 
         layout.addLayout(form_layout)
 
@@ -681,6 +725,10 @@ class AccountEditDialog(QDialog):
                 enabled=self.enabled_check.isChecked(),
                 auto_download_count=self.auto_download_count_spin.value(),
                 bilibili_cookie=cookie if platform == "bilibili" else "",
+                auto_download_videos=self.auto_download_videos_check.isChecked(),
+                auto_download_lives=self.auto_download_lives_check.isChecked(),
+                auto_download_videos_count=self.auto_download_videos_count_spin.value(),
+                auto_download_lives_count=self.auto_download_lives_count_spin.value(),
             )
 
             if self.is_new:

@@ -29,8 +29,12 @@ class Listener:
         account_name: str,
         download_path: str,
         check_interval: int = 300,  # 5 minutes
-        auto_download_count: int = 1,  # Number of new videos to auto-download (1-5)
+        auto_download_count: int = 1,  # Number of new videos to auto-download (1-5) - DEPRECATED
         bilibili_cookie: str = "",  # Bilibili SESSDATA cookie for authentication
+        auto_download_videos: bool = True,  # Auto-download new videos
+        auto_download_lives: bool = False,  # Auto-download live records
+        auto_download_videos_count: int = 1,  # Number of new videos to auto-download (1-5)
+        auto_download_lives_count: int = 1,  # Number of live records to auto-download (1-5)
         on_status_change: Optional[Callable] = None,
         on_video_found: Optional[Callable] = None,
         on_download_complete: Optional[Callable] = None,
@@ -43,8 +47,12 @@ class Listener:
             account_name: Human-readable account name
             download_path: Directory to download videos
             check_interval: Seconds between checks (default 300)
-            auto_download_count: Number of new videos to auto-download (1-5, default 1)
+            auto_download_count: Number of new videos to auto-download (1-5, default 1) - DEPRECATED
             bilibili_cookie: Bilibili SESSDATA cookie (required for Bilibili accounts)
+            auto_download_videos: Auto-download new videos (default True)
+            auto_download_lives: Auto-download live records (default False)
+            auto_download_videos_count: Number of new videos to auto-download (1-5, default 1)
+            auto_download_lives_count: Number of live records to auto-download (1-5, default 1)
             on_status_change: Callback when listener status changes
             on_video_found: Callback when new video is found
             on_download_complete: Callback when download finishes
@@ -54,7 +62,11 @@ class Listener:
         self.download_path = Path(download_path)
         self.check_interval = check_interval
         self.auto_download_count = auto_download_count
+        self.auto_download_videos_count = auto_download_videos_count
+        self.auto_download_lives_count = auto_download_lives_count
         self.bilibili_cookie = bilibili_cookie
+        self.auto_download_videos = auto_download_videos
+        self.auto_download_lives = auto_download_lives
         self.on_status_change = on_status_change
         self.on_video_found = on_video_found
         self.on_download_complete = on_download_complete
@@ -64,12 +76,19 @@ class Listener:
         self._is_listening = False
         self._lock = threading.Lock()
         self._last_videos: Dict[str, str] = {}  # Store last found videos
+        self._last_lives: Dict[str, str] = {}  # Store last found live streams
 
         # Ensure download directory exists and create account subfolder
         self.download_path.mkdir(parents=True, exist_ok=True)
         # Create account-specific subfolder
         self.download_path = self.download_path / account_name
         self.download_path.mkdir(parents=True, exist_ok=True)
+        
+        # Create lives subfolder if auto_download_lives is enabled
+        self.lives_path = None
+        if self.auto_download_lives:
+            self.lives_path = self.download_path / "lives"
+            self.lives_path.mkdir(parents=True, exist_ok=True)
         
         # Load cache from disk
         self._load_cache()
@@ -126,6 +145,12 @@ class Listener:
         """Get the cache file path for this account."""
         return self.download_path / ".dlbot_cache.json"
 
+    def _get_lives_cache_file(self) -> Path:
+        """Get the lives cache file path for this account."""
+        if self.lives_path:
+            return self.lives_path / ".dlbot_lives_cache.json"
+        return self.download_path / ".dlbot_lives_cache.json"
+
     def _load_cache(self) -> None:
         """Load cached video IDs from disk."""
         try:
@@ -138,9 +163,21 @@ class Listener:
                 )
             else:
                 self._last_videos = {}
+            
+            # Load lives cache
+            lives_cache_file = self._get_lives_cache_file()
+            if lives_cache_file.exists():
+                with open(lives_cache_file, 'r', encoding='utf-8') as f:
+                    self._last_lives = json.load(f)
+                logger.info(
+                    f"Loaded lives cache for {self.account_name}: {len(self._last_lives)} lives"
+                )
+            else:
+                self._last_lives = {}
         except Exception as e:
             logger.error(f"Error loading cache for {self.account_name}: {e}")
             self._last_videos = {}
+            self._last_lives = {}
 
     def _save_cache(self) -> None:
         """Save cached video IDs to disk."""
@@ -152,6 +189,15 @@ class Listener:
                 json.dump(self._last_videos, f, indent=2, ensure_ascii=False)
             logger.info(
                 f"Saved cache for {self.account_name}: {len(self._last_videos)} videos to {cache_file}"
+            )
+            
+            # Save lives cache
+            lives_cache_file = self._get_lives_cache_file()
+            lives_cache_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(lives_cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self._last_lives, f, indent=2, ensure_ascii=False)
+            logger.info(
+                f"Saved lives cache for {self.account_name}: {len(self._last_lives)} lives to {lives_cache_file}"
             )
         except Exception as e:
             logger.error(f"Error saving cache for {self.account_name}: {e}", exc_info=True)
@@ -185,21 +231,46 @@ class Listener:
         """Main listening loop running in separate thread."""
         while self._running:
             try:
-                self._check_for_new_content()
+                threads = []
+                
+                # Check for new videos if auto_download_videos is enabled
+                if self.auto_download_videos:
+                    video_thread = threading.Thread(
+                        target=self._check_for_new_videos,
+                        daemon=True,
+                    )
+                    video_thread.start()
+                    threads.append(video_thread)
+                
+                # Check for live streams if auto_download_lives is enabled
+                if self.auto_download_lives:
+                    lives_thread = threading.Thread(
+                        target=self._check_for_new_lives,
+                        daemon=True,
+                    )
+                    lives_thread.start()
+                    threads.append(lives_thread)
+                
+                # Wait for both checks to complete before next interval
+                for thread in threads:
+                    thread.join()
+                    
             except Exception as e:
                 logger.error(f"Error checking {self.account_name}: {e}")
 
             time.sleep(self.check_interval)
 
-    def _check_for_new_content(self) -> None:
-        """Check for new videos or live streams from the account."""
+    def _check_for_new_videos(self) -> None:
+        """Check for new videos from the account."""
         try:
             # Detect if this is a Bilibili URL
             is_bilibili = "bilibili.com" in self.account_url or "b23.tv" in self.account_url
             
+            logger.info(f"[Videos Check] Starting videos check for {self.account_name}")
+            
             # For Bilibili with cookie, use the official API
             if is_bilibili and self.bilibili_cookie:
-                self._check_bilibili_api()
+                self._check_bilibili_api(is_live=False)
                 return
             
             # Otherwise use yt-dlp for YouTube and Bilibili without cookie
@@ -222,38 +293,48 @@ class Listener:
                 })
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # For YouTube channels: add /videos to get video list
+                # For YouTube channels: add /videos to get video list (not live)
                 # For Bilibili: convert to search URL
-                url = self._prepare_url(self.account_url)
+                url = self._prepare_url(self.account_url, is_live=False)
+                
+                logger.info(f"[Videos Check] Fetching from URL: {url}")
 
                 try:
                     info = ydl.extract_info(url, download=False)
                 except Exception as e:
-                    logger.debug(f"Could not fetch info for {self.account_name}: {e}")
+                    logger.warning(f"[Videos Check] Could not fetch info for {self.account_name}: {e}")
                     return
 
                 if "entries" not in info or not info["entries"]:
+                    logger.info(f"[Videos Check] No entries found for {self.account_name}")
                     return
 
                 # For Bilibili search results, filter out non-video content
                 # Video entries have 'ext' field (content type)
                 entries = info["entries"]
+                logger.info(f"[Videos Check] Found {len(entries)} total entries for {self.account_name}")
+                
                 if is_bilibili:
                     # Filter to only include videos (vt=2 is video type in Bilibili search)
                     entries = [e for e in entries if e and e.get("ext") == "mp4" or (e.get("_type") == "video")]
                 
                 if not entries:
-                    logger.debug(f"No video entries found for {self.account_name} after filtering")
+                    logger.info(f"[Videos Check] No video entries found for {self.account_name} after filtering")
                     return
 
-                # Check first N videos/streams (based on auto_download_count)
+                logger.info(f"[Videos Check] Found {len(entries)} video entries after filtering for {self.account_name}")
+
+                # Check first N videos (based on auto_download_videos_count)
                 new_videos_found = False
-                for entry in entries[: self.auto_download_count]:
+                for idx, entry in enumerate(entries[: self.auto_download_videos_count]):
                     if not entry:
+                        logger.debug(f"[Videos Check] Entry {idx} is None, skipping")
                         continue
 
                     video_id = entry.get("id", entry.get("url", "unknown"))
                     title = entry.get("title", "Unknown")
+                    
+                    logger.info(f"[Videos Check] Processing entry {idx+1}: ID={video_id}, Title={title}")
 
                     # Skip if we've already seen this
                     if video_id in self._last_videos:
@@ -268,38 +349,198 @@ class Listener:
                     # Mark as seen
                     self._last_videos[video_id] = title
 
-                    # Check if it's a live stream or new video
+                    # For YouTube, the /videos endpoint should only return non-live videos
+                    # For Bilibili, we already filtered them above
+                    # Skip if it's marked as live (shouldn't happen if /videos is used)
                     is_live = entry.get("is_live", False)
+                    if is_live:
+                        logger.debug(f"Skipping live stream in videos check: {title}")
+                        continue
+
                     new_videos_found = True
 
-                    logger.info(
-                        f"Found new {'live stream' if is_live else 'video'}: {title}"
-                    )
+                    logger.info(f"Found new video: {title}")
 
                     if self.on_video_found:
                         self.on_video_found(
                             self.account_name,
                             video_id,
                             title,
-                            is_live,
+                            False,
                             entry.get("url", ""),
                         )
 
-                    # Automatically download
+                    # Automatically download in background thread to avoid blocking the listening loop
                     if new_videos_found:
-                        self._download_content(entry.get("url", ""), title)
+                        download_thread = threading.Thread(
+                            target=self._download_content,
+                            args=(entry.get("url", ""), title, False),
+                            daemon=True,
+                        )
+                        download_thread.start()
 
         except Exception as e:
-            logger.error(f"Error in _check_for_new_content for {self.account_name}: {e}")
+            logger.error(f"Error in _check_for_new_videos for {self.account_name}: {e}")
 
-    def _prepare_url(self, url: str) -> str:
+    def _check_for_new_lives(self) -> None:
+        """Check for new live streams from the account."""
+        try:
+            # Detect if this is a Bilibili URL
+            is_bilibili = "bilibili.com" in self.account_url or "b23.tv" in self.account_url
+            
+            logger.info(f"[Lives Check] Starting live streams check for {self.account_name}")
+            
+            # For Bilibili with cookie, use the official API
+            if is_bilibili and self.bilibili_cookie:
+                logger.info(f"[Lives Check] Using Bilibili API for {self.account_name}")
+                self._check_bilibili_api(is_live=True)
+                return
+            
+            # Otherwise use yt-dlp for YouTube and Bilibili without cookie
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "extract_flat": True,  # Don't download, just get info
+                "skip_download": True,
+                "socket_timeout": 30,
+            }
+            
+            # Add Bilibili-specific options
+            if is_bilibili:
+                ydl_opts.update({
+                    "http_headers": {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer": "https://search.bilibili.com/",
+                    },
+                    "retries": {"max_retries": 3, "backoff_factor": 1.5},
+                })
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # For YouTube channels: add /streams to get live streams
+                # For Bilibili: convert to search URL
+                url = self._prepare_url(self.account_url, is_live=True)
+                
+                logger.info(f"[Lives Check] Fetching from URL: {url}")
+
+                try:
+                    info = ydl.extract_info(url, download=False)
+                except Exception as e:
+                    logger.warning(f"[Lives Check] Could not fetch info for {self.account_name}: {e}")
+                    return
+
+                if "entries" not in info or not info["entries"]:
+                    logger.info(f"[Lives Check] No entries found for {self.account_name}")
+                    return
+
+                entries = info["entries"]
+                logger.info(f"[Lives Check] Found {len(entries)} total entries for {self.account_name}")
+                
+                # Debug: Log first few entries to understand data structure
+                for idx, entry in enumerate(entries[:3]):
+                    if entry:
+                        logger.debug(f"[Lives Check] Sample entry {idx}: id={entry.get('id')}, title={entry.get('title')}, is_live={entry.get('is_live')}, duration={entry.get('duration')}")
+                
+                # Filter to only live streams (is_live=True)
+                # NOTE: YouTube's /streams endpoint returns both current streams and past streams (VODs)
+                # We need to filter for currently live or recently recorded streams
+                live_entries = [e for e in entries if e and e.get("is_live", False)]
+                
+                logger.info(f"[Lives Check] Found {len(live_entries)} live entries after filtering for {self.account_name}")
+                if live_entries and len(live_entries) < 5:
+                    for entry in live_entries:
+                        logger.debug(f"[Lives Check] Live entry: {entry.get('title')} (is_live={entry.get('is_live')})")
+                
+                if not live_entries:
+                    logger.info(f"[Lives Check] No live stream entries found for {self.account_name}")
+                    return
+
+                # Check first N live streams
+                new_lives_found = False
+                for idx, entry in enumerate(live_entries[: self.auto_download_lives_count]):
+                    if not entry:
+                        logger.debug(f"[Lives Check] Entry {idx} is None, skipping")
+                        continue
+
+                    video_id = entry.get("id", entry.get("url", "unknown"))
+                    title = entry.get("title", "Unknown")
+                    
+                    logger.info(f"[Lives Check] Processing entry {idx+1}: ID={video_id}, Title={title}")
+
+                    # Skip scheduled/upcoming streams (no content yet)
+                    # YouTube marks upcoming streams as 'is_live', but they're actually scheduled
+                    # Check if stream has actual content by looking for duration or other indicators
+                    is_currently_live = entry.get("is_live", False)
+                    duration = entry.get("duration")
+                    
+                    logger.debug(f"[Lives Check] Stream {title}: is_live={is_currently_live}, duration={duration}")
+                    
+                    # If is_live is True but duration is 0 or None, it's scheduled/upcoming
+                    if is_currently_live and (duration is None or duration == 0):
+                        logger.info(f"[Lives Check] Skipping scheduled/upcoming stream (no content yet): {title}")
+                        continue
+
+                    # Skip if we've already seen this live
+                    if video_id in self._last_lives:
+                        logger.debug(f"[Lives Check] Already seen: {title}")
+                        continue
+
+                    # Skip if file already exists in lives folder
+                    if self.lives_path and self._file_exists_in_lives(video_id):
+                        logger.info(f"[Lives Check] Live file already exists in destination: {title}")
+                        self._last_lives[video_id] = title  # Mark as seen anyway
+                        continue
+
+                    # Mark as seen
+                    self._last_lives[video_id] = title
+                    new_lives_found = True
+
+                    logger.info(f"[Lives Check] Found new live stream: {title}")
+
+                    if self.on_video_found:
+                        self.on_video_found(
+                            self.account_name,
+                            video_id,
+                            title,
+                            True,
+                            entry.get("url", ""),
+                        )
+
+                    # Automatically download to lives folder in background thread to avoid blocking the listening loop
+                    if new_lives_found and self.lives_path:
+                        download_thread = threading.Thread(
+                            target=self._download_content,
+                            args=(entry.get("url", ""), title, True),
+                            daemon=True,
+                        )
+                        download_thread.start()
+
+        except Exception as e:
+            logger.error(f"Error in _check_for_new_lives for {self.account_name}: {e}")
+
+    def _file_exists_in_lives(self, video_id: str) -> bool:
+        """Check if a live file already exists in the lives folder."""
+        try:
+            if not self.lives_path or not self.lives_path.exists():
+                return False
+            # Check if any file with the video_id exists in the lives path
+            for file in self.lives_path.iterdir():
+                if video_id in file.name and file.is_file():
+                    logger.debug(f"Live file already exists: {file.name}")
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error checking live file existence: {e}")
+            return False
+
+    def _prepare_url(self, url: str, is_live: bool = False) -> str:
         """Prepare URL for extraction (handle YouTube and Bilibili differently)."""
-        # For YouTube: add /videos to get video list
+        # For YouTube: add /videos to get video list, or /streams for live streams
         if "youtube.com" in url or "youtu.be" in url:
-            if "/videos" not in url and "/live" not in url:
+            if "/videos" not in url and "/streams" not in url and "/live" not in url:
                 if not url.endswith("/"):
                     url += "/"
-                url += "videos"
+                # Use /streams endpoint for live streams, /videos for regular videos
+                url += "streams" if is_live else "videos"
         
         # For Bilibili: convert to search URL if it's a channel/user URL
         if "bilibili.com" in url or "b23.tv" in url:
@@ -369,8 +610,8 @@ class Listener:
         logger.warning(f"[Extract Mid] Failed to extract Bilibili user ID from {url}")
         return None
     
-    def _check_bilibili_api(self) -> None:
-        """Check for new videos using Bilibili's official API."""
+    def _check_bilibili_api(self, is_live: bool = False) -> None:
+        """Check for new videos or lives using Bilibili's official API."""
         try:
             # Extract user ID from URL
             host_mid = self._extract_host_mid(self.account_url)
@@ -378,7 +619,7 @@ class Listener:
                 logger.error(f"Could not extract Bilibili user ID from {self.account_url}")
                 return
             
-            logger.info(f"[Bilibili API] Account: {self.account_name}, User ID: {host_mid}")
+            logger.info(f"[Bilibili API] Account: {self.account_name}, User ID: {host_mid}, Type: {'lives' if is_live else 'videos'}")
             
             # Build API URL
             api_url = f"https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid={host_mid}"
@@ -415,106 +656,13 @@ class Listener:
                 logger.debug(f"No items found for {self.account_name}")
                 return
             
-            # Filter for video uploads only (pub_action == "投稿了视频")
-            new_videos_found = False
-            processed_count = 0
-            
-            for idx, item in enumerate(items):
-                if processed_count >= self.auto_download_count:
-                    break
-                
-                logger.debug(f"[Bilibili API] Processing item {idx+1}/{len(items)}")
-                
-                # Check if this is a video upload item
-                modules = item.get("modules", {})
-                if not modules:
-                    logger.debug(f"[Bilibili API] Item {idx+1}: No modules found")
-                    continue
-                
-                # Get module_author to check pub_action
-                module_author = modules.get("module_author", {})
-                if not module_author:
-                    logger.debug(f"[Bilibili API] Item {idx+1}: No module_author found")
-                    continue
-                
-                # CRITICAL: Only process items with pub_action == "投稿了视频" (video upload)
-                pub_action = module_author.get("pub_action", "")
-                logger.debug(f"[Bilibili API] Item {idx+1}: pub_action = '{pub_action}'")
-                
-                if pub_action != "投稿了视频":
-                    logger.debug(f"[Bilibili API] Item {idx+1}: Skipping - not a video upload (pub_action: {pub_action})")
-                    continue
-                
-                # Get video info from module_dynamic.major.archive (NOT from module_author)
-                module_dynamic = modules.get("module_dynamic", {})
-                if not module_dynamic:
-                    logger.debug(f"[Bilibili API] Item {idx+1}: No module_dynamic found")
-                    continue
-                
-                major = module_dynamic.get("major", {})
-                if not major or major.get("type") != "MAJOR_TYPE_ARCHIVE":
-                    logger.debug(f"[Bilibili API] Item {idx+1}: Not an archive type or missing major data")
-                    continue
-                
-                archive = major.get("archive", {})
-                if not archive:
-                    logger.debug(f"[Bilibili API] Item {idx+1}: No archive data found")
-                    continue
-                
-                # Extract video info from archive
-                video_id = archive.get("bvid", "")
-                title = archive.get("title", "Unknown")
-                video_jump_url = archive.get("jump_url", "")
-                
-                if not video_id or not video_jump_url:
-                    logger.debug(f"[Bilibili API] Item {idx+1}: Missing BVID or jump_url in archive")
-                    continue
-                
-                # Clean up video URL (remove leading //)
-                if video_jump_url.startswith("//"):
-                    video_jump_url = "https:" + video_jump_url
-                elif not video_jump_url.startswith("http"):
-                    video_jump_url = "https://" + video_jump_url
-                
-                logger.debug(f"[Bilibili API] Item {idx+1}: Found archive - BVID: {video_id}, Title: {title}, URL: {video_jump_url}")
-                
-                logger.info(f"[Bilibili API] Item {idx+1}: Found video upload - ID: {video_id}, Title: {title}")
-                
-                # Skip if we've already seen this
-                if video_id in self._last_videos:
-                    logger.debug(f"[Bilibili API] Item {idx+1}: {video_id} already seen, skipping")
-                    continue
-                
-                # Skip if file already exists in destination folder
-                if self._file_exists_in_destination(video_id):
-                    logger.info(f"[Bilibili API] File already exists in destination: {title}")
-                    self._last_videos[video_id] = title
-                    continue
-                
-                # Mark as seen and prepare to download
-                self._last_videos[video_id] = title
-                new_videos_found = True
-                processed_count += 1
-                
-                logger.info(f"[Bilibili API] Found new video: {title} (ID: {video_id})")
-                
-                if self.on_video_found:
-                    self.on_video_found(
-                        self.account_name,
-                        video_id,
-                        title,
-                        False,  # Not live
-                        video_jump_url,
-                    )
-                
-                # Automatically download
-                if new_videos_found:
-                    logger.info(f"[Bilibili API] Starting download for: {title}")
-                    self._download_content(video_jump_url, title)
+            if is_live:
+                self._process_bilibili_lives(items)
+            else:
+                self._process_bilibili_videos(items)
             
             # Save cache
             self._save_cache()
-            logger.info(f"[Bilibili API] Completed check for {self.account_name}, processed {processed_count} new videos")
             
         except requests.exceptions.RequestException as e:
             logger.error(f"[Bilibili API] Request error for {self.account_name}: {e}")
@@ -523,7 +671,220 @@ class Listener:
         except Exception as e:
             logger.error(f"[Bilibili API] Unexpected error for {self.account_name}: {e}", exc_info=True)
 
-    def _download_content(self, video_url: str, title: str) -> None:
+    def _process_bilibili_videos(self, items: list) -> None:
+        """Process Bilibili API items to extract videos."""
+        # Filter for video uploads only (pub_action == "投稿了视频")
+        new_videos_found = False
+        processed_count = 0
+        
+        for idx, item in enumerate(items):
+            if processed_count >= self.auto_download_videos_count:
+                break
+            
+            logger.debug(f"[Bilibili API] Processing video item {idx+1}/{len(items)}")
+            
+            # Check if this is a video upload item
+            modules = item.get("modules", {})
+            if not modules:
+                logger.debug(f"[Bilibili API] Item {idx+1}: No modules found")
+                continue
+            
+            # Get module_author to check pub_action
+            module_author = modules.get("module_author", {})
+            if not module_author:
+                logger.debug(f"[Bilibili API] Item {idx+1}: No module_author found")
+                continue
+            
+            # CRITICAL: Only process items with pub_action == "投稿了视频" (video upload)
+            pub_action = module_author.get("pub_action", "")
+            logger.debug(f"[Bilibili API] Item {idx+1}: pub_action = '{pub_action}'")
+            
+            if pub_action != "投稿了视频":
+                logger.debug(f"[Bilibili API] Item {idx+1}: Skipping - not a video upload (pub_action: {pub_action})")
+                continue
+            
+            # Get video info from module_dynamic.major.archive (NOT from module_author)
+            module_dynamic = modules.get("module_dynamic", {})
+            if not module_dynamic:
+                logger.debug(f"[Bilibili API] Item {idx+1}: No module_dynamic found")
+                continue
+            
+            major = module_dynamic.get("major", {})
+            if not major or major.get("type") != "MAJOR_TYPE_ARCHIVE":
+                logger.debug(f"[Bilibili API] Item {idx+1}: Not an archive type or missing major data")
+                continue
+            
+            archive = major.get("archive", {})
+            if not archive:
+                logger.debug(f"[Bilibili API] Item {idx+1}: No archive data found")
+                continue
+            
+            # Extract video info from archive
+            video_id = archive.get("bvid", "")
+            title = archive.get("title", "Unknown")
+            video_jump_url = archive.get("jump_url", "")
+            
+            if not video_id or not video_jump_url:
+                logger.debug(f"[Bilibili API] Item {idx+1}: Missing BVID or jump_url in archive")
+                continue
+            
+            # Clean up video URL (remove leading //)
+            if video_jump_url.startswith("//"):
+                video_jump_url = "https:" + video_jump_url
+            elif not video_jump_url.startswith("http"):
+                video_jump_url = "https://" + video_jump_url
+            
+            logger.debug(f"[Bilibili API] Item {idx+1}: Found archive - BVID: {video_id}, Title: {title}, URL: {video_jump_url}")
+            
+            logger.info(f"[Bilibili API] Item {idx+1}: Found video upload - ID: {video_id}, Title: {title}")
+            
+            # Skip if we've already seen this
+            if video_id in self._last_videos:
+                logger.debug(f"[Bilibili API] Item {idx+1}: {video_id} already seen, skipping")
+                continue
+            
+            # Skip if file already exists in destination folder
+            if self._file_exists_in_destination(video_id):
+                logger.info(f"[Bilibili API] File already exists in destination: {title}")
+                self._last_videos[video_id] = title
+                continue
+            
+            # Mark as seen and prepare to download
+            self._last_videos[video_id] = title
+            new_videos_found = True
+            processed_count += 1
+            
+            logger.info(f"[Bilibili API] Found new video: {title} (ID: {video_id})")
+            
+            if self.on_video_found:
+                self.on_video_found(
+                    self.account_name,
+                    video_id,
+                    title,
+                    False,  # Not live
+                    video_jump_url,
+                )
+            
+            # Automatically download
+            if new_videos_found:
+                logger.info(f"[Bilibili API] Starting download for: {title}")
+                self._download_content(video_jump_url, title, is_live=False)
+        
+        logger.info(f"[Bilibili API] Completed video check for {self.account_name}, processed {processed_count} new videos")
+
+    def _process_bilibili_lives(self, items: list) -> None:
+        """Process Bilibili API items to extract live streams."""
+        # Filter for live records (pub_action contains "直播" for lives)
+        new_lives_found = False
+        processed_count = 0
+        
+        for idx, item in enumerate(items):
+            if processed_count >= self.auto_download_lives_count:
+                break
+            
+            logger.debug(f"[Bilibili API] Processing live item {idx+1}/{len(items)}")
+            
+            # Check if this is a live record item
+            modules = item.get("modules", {})
+            if not modules:
+                logger.debug(f"[Bilibili API] Live item {idx+1}: No modules found")
+                continue
+            
+            # Get module_author to check pub_action
+            module_author = modules.get("module_author", {})
+            if not module_author:
+                logger.debug(f"[Bilibili API] Live item {idx+1}: No module_author found")
+                continue
+            
+            # Check for live-related actions
+            pub_action = module_author.get("pub_action", "")
+            logger.debug(f"[Bilibili API] Live item {idx+1}: pub_action = '{pub_action}'")
+            
+            # Live records typically have "直播" in the pub_action
+            if "直播" not in pub_action:
+                logger.debug(f"[Bilibili API] Live item {idx+1}: Skipping - not a live record (pub_action: {pub_action})")
+                continue
+            
+            # Get live info from module_dynamic.major
+            module_dynamic = modules.get("module_dynamic", {})
+            if not module_dynamic:
+                logger.debug(f"[Bilibili API] Live item {idx+1}: No module_dynamic found")
+                continue
+            
+            major = module_dynamic.get("major", {})
+            if not major:
+                logger.debug(f"[Bilibili API] Live item {idx+1}: No major data found")
+                continue
+            
+            # Extract live stream info
+            major_type = major.get("type", "")
+            live_id = None
+            title = "Unknown"
+            live_url = None
+            
+            # Different types of live content
+            if major_type == "MAJOR_TYPE_LIVE_RCMD":
+                live_detail = major.get("live_rcmd", {})
+                live_id = live_detail.get("live_id", "")
+                title = live_detail.get("title", "Unknown")
+                live_url = live_detail.get("jump_url", "")
+            elif major_type == "MAJOR_TYPE_ARCHIVE":
+                # Some archives might be live records
+                archive = major.get("archive", {})
+                live_id = archive.get("bvid", "")
+                title = archive.get("title", "Unknown")
+                live_url = archive.get("jump_url", "")
+            else:
+                logger.debug(f"[Bilibili API] Live item {idx+1}: Unsupported major type: {major_type}")
+                continue
+            
+            if not live_id or not live_url:
+                logger.debug(f"[Bilibili API] Live item {idx+1}: Missing live ID or URL")
+                continue
+            
+            # Clean up URL
+            if live_url.startswith("//"):
+                live_url = "https:" + live_url
+            elif not live_url.startswith("http"):
+                live_url = "https://" + live_url
+            
+            logger.debug(f"[Bilibili API] Live item {idx+1}: Found live - ID: {live_id}, Title: {title}, URL: {live_url}")
+            
+            # Skip if we've already seen this live
+            if live_id in self._last_lives:
+                logger.debug(f"[Bilibili API] Live item {idx+1}: {live_id} already seen, skipping")
+                continue
+            
+            # Skip if file already exists in lives folder
+            if self.lives_path and self._file_exists_in_lives(live_id):
+                logger.info(f"[Bilibili API] Live file already exists in destination: {title}")
+                self._last_lives[live_id] = title
+                continue
+            
+            # Mark as seen and prepare to download
+            self._last_lives[live_id] = title
+            new_lives_found = True
+            processed_count += 1
+            
+            logger.info(f"[Bilibili API] Found new live: {title} (ID: {live_id})")
+            
+            if self.on_video_found:
+                self.on_video_found(
+                    self.account_name,
+                    live_id,
+                    title,
+                    True,  # Is live
+                    live_url,
+                )
+            
+            # Automatically download to lives folder
+            if new_lives_found and self.lives_path:
+                logger.info(f"[Bilibili API] Starting download for live: {title}")
+                self._download_content(live_url, title, is_live=True)
+        
+        logger.info(f"[Bilibili API] Completed live check for {self.account_name}, processed {processed_count} new lives")
+
+    def _download_content(self, video_url: str, title: str, is_live: bool = False) -> None:
         """Download video/stream content with quality fallback for premium content."""
         try:
             logger.info(f"Starting download: {title}")
@@ -531,26 +892,41 @@ class Listener:
             # Sanitize the title for use in filename (remove invalid Windows characters)
             sanitized_title = self._sanitize_filename(title)
             
+            # Choose download path based on content type
+            if is_live and self.lives_path:
+                download_dir = self.lives_path
+            else:
+                download_dir = self.download_path
+            
             # Detect if this is a Bilibili URL
             is_bilibili = "bilibili.com" in video_url or "b23.tv" in video_url
 
-            # Bilibili separates video and audio streams
-            # Video IDs: 30011, 30016 (360p), 30033, 30032 (480p), 30066, 30064 (720p), 30077, 30080 (1080p)
-            # Audio IDs: 30216, 30232, 30280 (different bitrates)
-            # We need to download video + audio separately and merge
-            
-            quality_levels = [
-                "30080+30216",  # 1080p video + audio (best)
-                "30077+30216",  # 1080p hevc + audio
-                "30064+30216",  # 720p video + audio
-                "30066+30216",  # 720p hevc + audio
-                "30032+30216",  # 480p video + audio
-                "30033+30216",  # 480p hevc + audio
-                "30016+30216",  # 360p video + audio
-                "30011+30216",  # 360p hevc + audio
-                "30232",        # Audio only (fallback)
-                "best",         # Catch-all
-            ]
+            # Define quality levels based on platform
+            if is_bilibili:
+                # Bilibili separates video and audio streams
+                # Video IDs: 30011, 30016 (360p), 30033, 30032 (480p), 30066, 30064 (720p), 30077, 30080 (1080p)
+                # Audio IDs: 30216, 30232, 30280 (different bitrates)
+                # We need to download video + audio separately and merge
+                quality_levels = [
+                    "30080+30216",  # 1080p video + audio (best)
+                    "30077+30216",  # 1080p hevc + audio
+                    "30064+30216",  # 720p video + audio
+                    "30066+30216",  # 720p hevc + audio
+                    "30032+30216",  # 480p video + audio
+                    "30033+30216",  # 480p hevc + audio
+                    "30016+30216",  # 360p video + audio
+                    "30011+30216",  # 360p hevc + audio
+                    "30232",        # Audio only (fallback)
+                    "best",         # Catch-all
+                ]
+            else:
+                # YouTube format codes (format_id for different quality levels)
+                quality_levels = [
+                    "best[ext=mp4]",           # Best quality in MP4 format
+                    "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]",  # Best video + best audio merged
+                    "bestvideo+bestaudio/best",  # Best video + best audio (any format)
+                    "best",                    # Catch-all best available
+                ]
 
             last_error = None
             
@@ -560,19 +936,35 @@ class Listener:
                     
                     ydl_opts = {
                         "format": format_str,
-                        "postprocessors": [
-                            {
-                                "key": "FFmpegMerger",
-                            },
-                        ],
                         "outtmpl": str(
-                            self.download_path / f"{self.account_name}_{sanitized_title}_%(id)s.%(ext)s"
+                            download_dir / f"{self.account_name}_{sanitized_title}_%(id)s.%(ext)s"
                         ),
                         "quiet": False,
                         "no_warnings": False,
                         "progress_hooks": [self._progress_hook],
                         "socket_timeout": 30,
                     }
+                    
+                    # Add postprocessors only for formats that actually need merging
+                    # For YouTube: only add merger if format explicitly requests multiple streams (+ in format string)
+                    # For Bilibili: always add merger since we use video+audio format codes
+                    if is_bilibili:
+                        ydl_opts["postprocessors"] = [
+                            {
+                                "key": "FFmpegMerger",
+                            },
+                        ]
+                    elif "+" in format_str and format_str not in ["best", "best[ext=mp4]"]:
+                        # Only add merger if format string contains + (multiple streams to merge)
+                        # This applies to formats like "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]"
+                        ydl_opts["postprocessors"] = [
+                            {
+                                "key": "FFmpegMerger",
+                            },
+                        ]
+                    else:
+                        # Single format streams don't need merging postprocessor
+                        ydl_opts["postprocessors"] = []
                     
                     # Add Bilibili-specific options for download (web scraping)
                     if is_bilibili:
@@ -598,6 +990,23 @@ class Listener:
                     error_msg = str(e).lower()
                     last_error = e
                     
+                    # Check if error is because stream is scheduled/upcoming/offline
+                    is_scheduled_error = any(keyword in error_msg for keyword in [
+                        "scheduled",
+                        "upcoming",
+                        "stream is offline",
+                        "has not started",
+                        "no video formats",
+                        "no video format found",
+                        "not yet started",
+                        "scheduled to start",
+                    ])
+                    
+                    if is_scheduled_error:
+                        logger.warning(f"[Download] Stream is scheduled/offline/upcoming, cannot download yet: {title}")
+                        logger.debug(f"[Download] Error: {e}")
+                        return  # Don't retry, just skip this stream
+                    
                     # Check if error is premium/membership related
                     is_premium_error = any(keyword in error_msg for keyword in [
                         "premium",
@@ -614,6 +1023,7 @@ class Listener:
                         "missing",
                         "are missing",
                     ])
+                    
                     
                     # Check if error is format not available (video format mismatch)
                     is_format_unavailable = any(keyword in error_msg for keyword in [
@@ -694,6 +1104,10 @@ class ListenerManager:
         check_interval: int = 300,
         auto_download_count: int = 1,
         bilibili_cookie: str = "",
+        auto_download_videos: bool = True,
+        auto_download_lives: bool = False,
+        auto_download_videos_count: int = 1,
+        auto_download_lives_count: int = 1,
         on_status_change: Optional[Callable] = None,
         on_video_found: Optional[Callable] = None,
         on_download_complete: Optional[Callable] = None,
@@ -711,6 +1125,10 @@ class ListenerManager:
                 check_interval=check_interval,
                 auto_download_count=auto_download_count,
                 bilibili_cookie=bilibili_cookie,
+                auto_download_videos=auto_download_videos,
+                auto_download_lives=auto_download_lives,
+                auto_download_videos_count=auto_download_videos_count,
+                auto_download_lives_count=auto_download_lives_count,
                 on_status_change=on_status_change,
                 on_video_found=on_video_found,
                 on_download_complete=on_download_complete,

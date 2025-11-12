@@ -41,6 +41,10 @@ class AppController:
                     download_path=account.download_path,
                     auto_download_count=account.auto_download_count,
                     bilibili_cookie=account.bilibili_cookie,
+                    auto_download_videos=account.auto_download_videos,
+                    auto_download_lives=account.auto_download_lives,
+                    auto_download_videos_count=account.auto_download_videos_count,
+                    auto_download_lives_count=account.auto_download_lives_count,
                     on_status_change=self._on_listener_status_change,
                     on_video_found=self._on_video_found,
                     on_download_complete=self._on_download_complete,
@@ -64,6 +68,10 @@ class AppController:
                 download_path=account.download_path,
                 auto_download_count=account.auto_download_count,
                 bilibili_cookie=account.bilibili_cookie,
+                auto_download_videos=account.auto_download_videos,
+                auto_download_lives=account.auto_download_lives,
+                auto_download_videos_count=account.auto_download_videos_count,
+                auto_download_lives_count=account.auto_download_lives_count,
                 on_status_change=self._on_listener_status_change,
                 on_video_found=self._on_video_found,
                 on_download_complete=self._on_download_complete,
@@ -79,8 +87,21 @@ class AppController:
 
     def update_account(self, account: Account) -> bool:
         """Update an account."""
+        # Get the old account to compare auto-download settings
+        old_account = self.config_manager.get_account(account.name)
+        
         # Update in config
         if self.config_manager.update_account(account):
+            # Check if auto-download settings changed
+            auto_download_changed = (
+                old_account is not None and (
+                    old_account.auto_download_videos != account.auto_download_videos or
+                    old_account.auto_download_lives != account.auto_download_lives or
+                    old_account.auto_download_videos_count != account.auto_download_videos_count or
+                    old_account.auto_download_lives_count != account.auto_download_lives_count
+                )
+            )
+            
             # Update or recreate listener
             existing = self.listener_manager.get_listener(account.name)
             if existing:
@@ -93,10 +114,23 @@ class AppController:
                 download_path=account.download_path,
                 auto_download_count=account.auto_download_count,
                 bilibili_cookie=account.bilibili_cookie,
+                auto_download_videos=account.auto_download_videos,
+                auto_download_lives=account.auto_download_lives,
+                auto_download_videos_count=account.auto_download_videos_count,
+                auto_download_lives_count=account.auto_download_lives_count,
                 on_status_change=self._on_listener_status_change,
                 on_video_found=self._on_video_found,
                 on_download_complete=self._on_download_complete,
             )
+            
+            # Log if auto-download settings changed
+            if auto_download_changed:
+                logger.info(
+                    f"Auto-download settings changed for {account.name}: "
+                    f"videos={account.auto_download_videos} (count={account.auto_download_videos_count}), "
+                    f"lives={account.auto_download_lives} (count={account.auto_download_lives_count}) - Listener restarted"
+                )
+            
             return True
         return False
 
