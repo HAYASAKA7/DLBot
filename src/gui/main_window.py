@@ -122,6 +122,14 @@ STYLESHEET = """
     QPushButton#batchDownloadBtn:hover {
         background-color: #388E3C;
     }
+
+    QPushButton#logsBtn {
+        background-color: #9C27B0;
+    }
+
+    QPushButton#logsBtn:hover {
+        background-color: #7B1FA2;
+    }
     
     QPushButton#startAllBtn {
         background-color: #4CAF50;
@@ -329,6 +337,11 @@ class MainWindow(QMainWindow):
         self.batch_download_btn.clicked.connect(self._on_batch_download)
         control_layout.addWidget(self.batch_download_btn)
 
+        self.logs_btn = QPushButton("Logs")
+        self.logs_btn.setObjectName("logsBtn")
+        self.logs_btn.clicked.connect(self._on_logs)
+        control_layout.addWidget(self.logs_btn)
+
         control_layout.addStretch()
 
         self.settings_btn = QPushButton("Settings")
@@ -486,6 +499,13 @@ class MainWindow(QMainWindow):
         from src.gui.batch_download_dialog import BatchDownloadDialog
 
         dialog = BatchDownloadDialog(self.app_controller, self)
+        dialog.exec_()
+
+    def _on_logs(self) -> None:
+        """Open logs viewer dialog."""
+        from src.gui.logs_dialog import LogsDialog
+
+        dialog = LogsDialog(self)
         dialog.exec_()
 
     def _on_edit_account(self, account_name: str) -> None:

@@ -52,6 +52,7 @@ class AppConfig:
     theme: str = "light"  # 'light' or 'dark'
     use_youtube_cookies: bool = False  # Use cookies from browser for YouTube authentication
     first_run: bool = True  # Whether this is the first run of the application
+    log_retention_days: int = 7  # How long to keep log files: 1 (24h), 7, 14, or 30 days
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -65,6 +66,7 @@ class AppConfig:
             "theme": self.theme,
             "use_youtube_cookies": self.use_youtube_cookies,
             "first_run": self.first_run,
+            "log_retention_days": self.log_retention_days,
         }
 
     @classmethod
@@ -83,6 +85,7 @@ class AppConfig:
             theme=data.get("theme", "light"),
             use_youtube_cookies=data.get("use_youtube_cookies", False),
             first_run=data.get("first_run", True),
+            log_retention_days=data.get("log_retention_days", 7),
         )
 
 
@@ -124,6 +127,7 @@ class ConfigManager:
             theme="light",
             use_youtube_cookies=False,
             first_run=True,
+            log_retention_days=7,
         )
 
     def get_config(self) -> AppConfig:
@@ -265,4 +269,16 @@ class ConfigManager:
             return False
 
         self._config.first_run = is_first_run
+        return self.save()
+
+    def set_log_retention_days(self, days: int) -> bool:
+        """Set log retention days."""
+        if self._config is None:
+            return False
+
+        if days not in [1, 7, 14, 30]:
+            logger.warning(f"Invalid log retention days: {days}")
+            return False
+
+        self._config.log_retention_days = days
         return self.save()

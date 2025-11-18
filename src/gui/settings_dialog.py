@@ -364,6 +364,23 @@ class SettingsDialog(QDialog):
         )
         layout.addRow("", self.use_youtube_cookies_check)
 
+        # Log retention
+        self.log_retention_combo = QComboBox()
+        self.log_retention_combo.addItems(["24 hours", "7 days", "14 days", "30 days"])
+        # Map display text to days value
+        retention_mapping = {
+            "24 hours": 1,
+            "7 days": 7,
+            "14 days": 14,
+            "30 days": 30
+        }
+        # Set current value based on config
+        for display_text, days_value in retention_mapping.items():
+            if days_value == config.log_retention_days:
+                self.log_retention_combo.setCurrentText(display_text)
+                break
+        layout.addRow("Log Retention:", self.log_retention_combo)
+
         main_layout.addLayout(layout)
         main_layout.addStretch()
 
@@ -492,6 +509,17 @@ class SettingsDialog(QDialog):
             # Update use YouTube cookies
             use_youtube_cookies = self.use_youtube_cookies_check.isChecked()
             self.app_controller.config_manager.set_use_youtube_cookies(use_youtube_cookies)
+
+            # Update log retention
+            retention_text = self.log_retention_combo.currentText()
+            retention_mapping = {
+                "24 hours": 1,
+                "7 days": 7,
+                "14 days": 14,
+                "30 days": 30
+            }
+            retention_days = retention_mapping.get(retention_text, 7)
+            self.app_controller.config_manager.set_log_retention_days(retention_days)
 
             QMessageBox.information(self, "Success", "Settings saved successfully.")
             super().accept()
