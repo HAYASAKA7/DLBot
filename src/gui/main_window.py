@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
     QDialog,
     QLabel,
     QSystemTrayIcon,
+    QMessageBox,
 )
 from PyQt5.QtGui import QIcon, QColor
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QObject
@@ -164,6 +165,64 @@ STYLESHEET = """
     QMenu::item:selected {
         background-color: #e3f2fd;
     }
+    
+    /* QMessageBox button styling */
+    QMessageBox QPushButton {
+        background-color: #2196F3;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-weight: bold;
+        font-size: 11px;
+        min-width: 80px;
+        min-height: 24px;
+    }
+    
+    QMessageBox QPushButton:hover {
+        background-color: #1976D2;
+    }
+    
+    QMessageBox QPushButton:pressed {
+        background-color: #1565C0;
+    }
+    
+    QMessageBox QPushButton:focus {
+        background-color: #1976D2;
+        outline: none;
+    }
+    
+    QMessageBox QPushButton:default {
+        background-color: #4CAF50;
+    }
+    
+    QMessageBox QPushButton:default:hover {
+        background-color: #388E3C;
+    }
+    
+    /* Style for No button - make it red */
+    QMessageBox QPushButton[text="&No"],
+    QMessageBox QPushButton[text="No"] {
+        background-color: #f44336;
+    }
+    
+    QMessageBox QPushButton[text="&No"]:hover,
+    QMessageBox QPushButton[text="No"]:hover {
+        background-color: #d32f2f;
+    }
+    
+    QMessageBox QPushButton[text="&No"]:pressed,
+    QMessageBox QPushButton[text="No"]:pressed {
+        background-color: #b71c1c;
+    }
+    
+    QMessageBox {
+        background-color: white;
+    }
+    
+    QMessageBox QLabel {
+        color: #333;
+    }
 """
 
 
@@ -173,6 +232,7 @@ class SignalEmitter(QObject):
     status_changed = pyqtSignal(str, bool)  # account_name, is_listening
     video_found = pyqtSignal(str, str, str, bool, str)  # account, video_id, title, is_live, url
     download_complete = pyqtSignal(str, str)  # account_name, title
+    cookie_needed = pyqtSignal(str, str)  # account_name, error_msg
 
 
 class MainWindow(QMainWindow):
@@ -194,6 +254,10 @@ class MainWindow(QMainWindow):
         self.signal_emitter.status_changed.connect(self._on_listener_status_changed)
         self.signal_emitter.video_found.connect(self._on_video_found)
         self.signal_emitter.download_complete.connect(self._on_download_complete)
+        self.signal_emitter.cookie_needed.connect(self._on_cookie_needed)
+        
+        # Set cookie needed callback
+        self.app_controller.set_cookie_needed_callback(self._handle_cookie_needed)
 
         self.setWindowTitle("DLBot - Content Listener & Downloader")
         self.setGeometry(100, 100, 1000, 600)
@@ -212,6 +276,11 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._init_tray()
         self._setup_timer()
+        
+        # Show first run dialog if this is the first time
+        config = self.app_controller.config_manager.get_config()
+        if config.first_run:
+            self._show_first_run_dialog()
 
     def _init_ui(self) -> None:
         """Initialize UI components."""
@@ -485,3 +554,77 @@ class MainWindow(QMainWindow):
             self.hide_window()
         else:
             self._on_exit()
+
+    def _show_first_run_dialog(self) -> None:
+        """Show first-run dialog asking about YouTube cookie usage."""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Welcome to DLBot")
+        msg.setIcon(QMessageBox.Information)
+        msg.setText(
+            "Welcome to DLBot!\n\n"
+            "YouTube sometimes requires authentication to download videos.\n"
+            "Do you want to use cookies from your Chrome browser for YouTube authentication?\n\n"
+            "You can change this setting later in Settings > General."
+        )
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+        
+        result = msg.exec_()
+        
+        # Save the choice
+        use_cookies = (result == QMessageBox.Yes)
+        self.app_controller.config_manager.set_use_youtube_cookies(use_cookies)
+        self.app_controller.config_manager.set_first_run(False)
+        
+        logger.info(f"First run: User chose to {'use' if use_cookies else 'not use'} YouTube cookies")
+
+    def _handle_cookie_needed(self, account_name: str, error_msg: str) -> None:
+        """Handle cookie needed callback from listener."""
+        # Emit signal to ensure this runs on the main GUI thread
+        self.signal_emitter.cookie_needed.emit(account_name, error_msg)
+
+    def _on_cookie_needed(self, account_name: str, error_msg: str) -> None:
+        """Handle cookie needed signal (runs on main thread)."""
+        retry = self.show_cookie_warning_dialog(account_name, error_msg)
+        
+        if retry:
+            # Restart the listener with cookies enabled
+            logger.info(f"Restarting listener for {account_name} with cookies enabled")
+            self.app_controller.stop_listener(account_name)
+            # Update the listener with new cookie setting
+            # The listener will pick up the new config automatically when restarted
+            self.app_controller.start_listener(account_name)
+            self._refresh_account_table()
+
+    def show_cookie_warning_dialog(self, account_name: str, error_msg: str) -> bool:
+        """
+        Show warning dialog when cookies are needed but not enabled.
+        
+        Returns:
+            True if user wants to enable cookies and retry, False otherwise
+        """
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Authentication Required")
+        msg.setIcon(QMessageBox.Warning)
+        msg.setText(
+            f"YouTube requires authentication for account '{account_name}'.\n\n"
+            f"Error: {error_msg}\n\n"
+            "Do you want to enable browser cookies and retry?"
+        )
+        msg.setInformativeText(
+            "If you enable cookies, the application will extract cookies from your Chrome browser.\n"
+            "You can disable this later in Settings > General."
+        )
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.Yes)
+        
+        result = msg.exec_()
+        
+        if result == QMessageBox.Yes:
+            # Enable cookies
+            self.app_controller.config_manager.set_use_youtube_cookies(True)
+            logger.info(f"User enabled YouTube cookies after authentication error for {account_name}")
+            return True
+        else:
+            logger.info(f"User chose to ignore authentication error for {account_name}")
+            return False

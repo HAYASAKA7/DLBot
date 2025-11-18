@@ -50,6 +50,8 @@ class AppConfig:
     minimize_to_tray: bool = True
     start_minimized: bool = False
     theme: str = "light"  # 'light' or 'dark'
+    use_youtube_cookies: bool = False  # Use cookies from browser for YouTube authentication
+    first_run: bool = True  # Whether this is the first run of the application
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -61,6 +63,8 @@ class AppConfig:
             "minimize_to_tray": self.minimize_to_tray,
             "start_minimized": self.start_minimized,
             "theme": self.theme,
+            "use_youtube_cookies": self.use_youtube_cookies,
+            "first_run": self.first_run,
         }
 
     @classmethod
@@ -77,6 +81,8 @@ class AppConfig:
             minimize_to_tray=data.get("minimize_to_tray", True),
             start_minimized=data.get("start_minimized", False),
             theme=data.get("theme", "light"),
+            use_youtube_cookies=data.get("use_youtube_cookies", False),
+            first_run=data.get("first_run", True),
         )
 
 
@@ -116,6 +122,8 @@ class ConfigManager:
             minimize_to_tray=True,
             start_minimized=False,
             theme="light",
+            use_youtube_cookies=False,
+            first_run=True,
         )
 
     def get_config(self) -> AppConfig:
@@ -241,4 +249,20 @@ class ConfigManager:
             return False
 
         self._config.start_minimized = enabled
+        return self.save()
+
+    def set_use_youtube_cookies(self, enabled: bool) -> bool:
+        """Set use YouTube cookies preference."""
+        if self._config is None:
+            return False
+
+        self._config.use_youtube_cookies = enabled
+        return self.save()
+
+    def set_first_run(self, is_first_run: bool) -> bool:
+        """Set first run flag."""
+        if self._config is None:
+            return False
+
+        self._config.first_run = is_first_run
         return self.save()

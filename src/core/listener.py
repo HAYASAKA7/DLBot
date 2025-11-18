@@ -35,9 +35,11 @@ class Listener:
         auto_download_lives: bool = False,  # Auto-download live records
         auto_download_videos_count: int = 1,  # Number of new videos to auto-download (1-5)
         auto_download_lives_count: int = 1,  # Number of live records to auto-download (1-5)
+        use_youtube_cookies: bool = False,  # Use cookies from browser for YouTube authentication
         on_status_change: Optional[Callable] = None,
         on_video_found: Optional[Callable] = None,
         on_download_complete: Optional[Callable] = None,
+        on_cookie_needed: Optional[Callable] = None,  # Callback when cookies are needed
     ):
         """
         Initialize a listener for an account.
@@ -53,9 +55,11 @@ class Listener:
             auto_download_lives: Auto-download live records (default False)
             auto_download_videos_count: Number of new videos to auto-download (1-5, default 1)
             auto_download_lives_count: Number of live records to auto-download (1-5, default 1)
+            use_youtube_cookies: Use cookies from browser for YouTube authentication (default False)
             on_status_change: Callback when listener status changes
             on_video_found: Callback when new video is found
             on_download_complete: Callback when download finishes
+            on_cookie_needed: Callback when cookies are needed but not enabled
         """
         self.account_url = account_url
         self.account_name = account_name
@@ -67,9 +71,11 @@ class Listener:
         self.bilibili_cookie = bilibili_cookie
         self.auto_download_videos = auto_download_videos
         self.auto_download_lives = auto_download_lives
+        self.use_youtube_cookies = use_youtube_cookies
         self.on_status_change = on_status_change
         self.on_video_found = on_video_found
         self.on_download_complete = on_download_complete
+        self.on_cookie_needed = on_cookie_needed
 
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -226,6 +232,17 @@ class Listener:
         except Exception as e:
             logger.error(f"Error checking file existence: {e}")
             return False
+
+    def _is_cookie_error(self, error_msg: str) -> bool:
+        """Check if error message indicates cookies are needed."""
+        cookie_indicators = [
+            "Sign in to confirm you're not a bot",
+            "Sign in to confirm",
+            "Use --cookies-from-browser",
+            "Use --cookies for the authentication",
+            "requires authentication",
+        ]
+        return any(indicator in str(error_msg) for indicator in cookie_indicators)
 
     def _listen_loop(self) -> None:
         """Main listening loop running in separate thread."""
@@ -989,6 +1006,11 @@ class Listener:
                             "retries": {"max_retries": 3, "backoff_factor": 1.5},
                             "cookies_from_browser": ("chrome", None),  # Extract cookies from Chrome browser for Bilibili authentication
                         })
+                    
+                    # Add YouTube cookie support if enabled
+                    if not is_bilibili and self.use_youtube_cookies:
+                        ydl_opts["cookiesfrombrowser"] = ("chrome",)
+                        logger.info(f"[Download] Using Chrome cookies for YouTube authentication")
 
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         ydl.download([video_url])
@@ -1002,6 +1024,16 @@ class Listener:
                 except Exception as e:
                     error_msg = str(e).lower()
                     last_error = e
+                    
+                    # Check if this is a YouTube cookie error and cookies are not enabled
+                    is_youtube = "youtube.com" in video_url or "youtu.be" in video_url
+                    if is_youtube and not self.use_youtube_cookies and self._is_cookie_error(str(e)):
+                        logger.error(f"[Download] YouTube requires cookies but cookies are disabled: {e}")
+                        # Call the callback to notify the UI
+                        if self.on_cookie_needed:
+                            self.on_cookie_needed(self.account_name, str(e))
+                        # Stop trying other quality levels for this video
+                        return
                     
                     # Check if error is because stream is scheduled/upcoming/offline
                     is_scheduled_error = any(keyword in error_msg for keyword in [
@@ -1121,9 +1153,11 @@ class ListenerManager:
         auto_download_lives: bool = False,
         auto_download_videos_count: int = 1,
         auto_download_lives_count: int = 1,
+        use_youtube_cookies: bool = False,
         on_status_change: Optional[Callable] = None,
         on_video_found: Optional[Callable] = None,
         on_download_complete: Optional[Callable] = None,
+        on_cookie_needed: Optional[Callable] = None,
     ) -> Listener:
         """Add a new listener for an account."""
         with self._lock:
@@ -1142,9 +1176,11 @@ class ListenerManager:
                 auto_download_lives=auto_download_lives,
                 auto_download_videos_count=auto_download_videos_count,
                 auto_download_lives_count=auto_download_lives_count,
+                use_youtube_cookies=use_youtube_cookies,
                 on_status_change=on_status_change,
                 on_video_found=on_video_found,
                 on_download_complete=on_download_complete,
+                on_cookie_needed=on_cookie_needed,
             )
             self._listeners[account_name] = listener
             logger.info(f"Added listener for {account_name}")

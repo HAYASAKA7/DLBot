@@ -137,6 +137,64 @@ SETTINGS_STYLESHEET = """
         border-radius: 4px;
         padding: 4px;
     }
+    
+    /* QMessageBox button styling */
+    QMessageBox QPushButton {
+        background-color: #2196F3;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-weight: bold;
+        font-size: 11px;
+        min-width: 80px;
+        min-height: 24px;
+    }
+    
+    QMessageBox QPushButton:hover {
+        background-color: #1976D2;
+    }
+    
+    QMessageBox QPushButton:pressed {
+        background-color: #1565C0;
+    }
+    
+    QMessageBox QPushButton:focus {
+        background-color: #1976D2;
+        outline: none;
+    }
+    
+    QMessageBox QPushButton:default {
+        background-color: #4CAF50;
+    }
+    
+    QMessageBox QPushButton:default:hover {
+        background-color: #388E3C;
+    }
+    
+    /* Style for No button - make it red */
+    QMessageBox QPushButton[text="&No"],
+    QMessageBox QPushButton[text="No"] {
+        background-color: #f44336;
+    }
+    
+    QMessageBox QPushButton[text="&No"]:hover,
+    QMessageBox QPushButton[text="No"]:hover {
+        background-color: #d32f2f;
+    }
+    
+    QMessageBox QPushButton[text="&No"]:pressed,
+    QMessageBox QPushButton[text="No"]:pressed {
+        background-color: #b71c1c;
+    }
+    
+    QMessageBox {
+        background-color: white;
+    }
+    
+    QMessageBox QLabel {
+        color: #333;
+    }
 """
 
 
@@ -297,6 +355,15 @@ class SettingsDialog(QDialog):
         self.start_minimized_check.setChecked(config.start_minimized)
         layout.addRow("", self.start_minimized_check)
 
+        # Use YouTube cookies
+        self.use_youtube_cookies_check = QCheckBox("Use browser cookies for YouTube authentication")
+        self.use_youtube_cookies_check.setChecked(config.use_youtube_cookies)
+        self.use_youtube_cookies_check.setToolTip(
+            "Enable this if YouTube requires authentication (e.g., 'Sign in to confirm you're not a bot').\n"
+            "This will extract cookies from your Chrome browser."
+        )
+        layout.addRow("", self.use_youtube_cookies_check)
+
         main_layout.addLayout(layout)
         main_layout.addStretch()
 
@@ -421,6 +488,10 @@ class SettingsDialog(QDialog):
             # Update start minimized
             start_minimized = self.start_minimized_check.isChecked()
             self.app_controller.config_manager.set_start_minimized(start_minimized)
+
+            # Update use YouTube cookies
+            use_youtube_cookies = self.use_youtube_cookies_check.isChecked()
+            self.app_controller.config_manager.set_use_youtube_cookies(use_youtube_cookies)
 
             QMessageBox.information(self, "Success", "Settings saved successfully.")
             super().accept()

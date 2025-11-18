@@ -27,6 +27,7 @@ class AppController:
         """
         self.config_manager = ConfigManager(config_path)
         self.listener_manager = ListenerManager()
+        self._cookie_needed_callback = None
         self._initialize_listeners()
 
     def _initialize_listeners(self) -> None:
@@ -45,9 +46,11 @@ class AppController:
                     auto_download_lives=account.auto_download_lives,
                     auto_download_videos_count=account.auto_download_videos_count,
                     auto_download_lives_count=account.auto_download_lives_count,
+                    use_youtube_cookies=config.use_youtube_cookies,
                     on_status_change=self._on_listener_status_change,
                     on_video_found=self._on_video_found,
                     on_download_complete=self._on_download_complete,
+                    on_cookie_needed=self._on_cookie_needed,
                 )
 
     def get_all_accounts(self) -> list:
@@ -62,6 +65,7 @@ class AppController:
         """Add a new account."""
         if self.config_manager.add_account(account):
             # Create listener for this account
+            config = self.config_manager.get_config()
             self.listener_manager.add_listener(
                 account_name=account.name,
                 account_url=account.url,
@@ -72,9 +76,11 @@ class AppController:
                 auto_download_lives=account.auto_download_lives,
                 auto_download_videos_count=account.auto_download_videos_count,
                 auto_download_lives_count=account.auto_download_lives_count,
+                use_youtube_cookies=config.use_youtube_cookies,
                 on_status_change=self._on_listener_status_change,
                 on_video_found=self._on_video_found,
                 on_download_complete=self._on_download_complete,
+                on_cookie_needed=self._on_cookie_needed,
             )
             return True
         return False
@@ -108,6 +114,7 @@ class AppController:
                 existing.stop()
                 self.listener_manager.remove_listener(account.name)
 
+            config = self.config_manager.get_config()
             self.listener_manager.add_listener(
                 account_name=account.name,
                 account_url=account.url,
@@ -118,9 +125,11 @@ class AppController:
                 auto_download_lives=account.auto_download_lives,
                 auto_download_videos_count=account.auto_download_videos_count,
                 auto_download_lives_count=account.auto_download_lives_count,
+                use_youtube_cookies=config.use_youtube_cookies,
                 on_status_change=self._on_listener_status_change,
                 on_video_found=self._on_video_found,
                 on_download_complete=self._on_download_complete,
+                on_cookie_needed=self._on_cookie_needed,
             )
             
             # Log if auto-download settings changed
@@ -238,8 +247,20 @@ class AppController:
         """Handle download completion."""
         logger.info(f"Download complete for {account_name}: {title}")
 
+    def _on_cookie_needed(self, account_name: str, error_msg: str) -> None:
+        """Handle cookie authentication needed."""
+        logger.warning(f"Cookie authentication needed for {account_name}: {error_msg}")
+        # Call the callback if set (usually the main window to show a dialog)
+        if self._cookie_needed_callback:
+            self._cookie_needed_callback(account_name, error_msg)
+
+    def set_cookie_needed_callback(self, callback) -> None:
+        """Set callback for when cookies are needed."""
+        self._cookie_needed_callback = callback
+
     def shutdown(self) -> None:
         """Shutdown application."""
         logger.info("Shutting down application")
         self.stop_all_listeners()
         self.config_manager.save()
+
