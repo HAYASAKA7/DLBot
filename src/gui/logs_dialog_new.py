@@ -197,36 +197,37 @@ class LogsDialog(QDialog):
             with open(log_path, "r", encoding="utf-8") as f:
                 content = f.read()
             
-            # Save current scroll position before updating
-            scrollbar = self.log_text.verticalScrollBar()
-            old_scroll_pos = scrollbar.value()
-            old_scroll_max = scrollbar.maximum()
-            
-            # Check if content has changed
+            # Only update if content has changed
             if content != self._last_log_content:
                 self._last_log_content = content
                 
-                # Update text - this temporarily resets scroll position
+                # Get scrollbar before updating
+                scrollbar = self.log_text.verticalScrollBar()
+                old_value = scrollbar.value()
+                old_max = scrollbar.maximum()
+                
+                # Update the text - this will trigger scrollbar reset
                 self.log_text.setPlainText(content)
                 
-                # Now restore or adjust scroll position
+                # Now adjust scrollbar based on the situation
                 if self._scroll_after_update or self._first_load:
-                    # Explicit request to scroll to bottom
+                    # User explicitly wants scroll to bottom (first load or manual refresh)
                     QTimer.singleShot(10, self._scroll_to_bottom)
                     self._first_load = False
                     self._scroll_after_update = False
                 else:
-                    # Auto-refresh: intelligently restore scroll
-                    # If user was near bottom, keep them at bottom for new logs
-                    new_scroll_max = scrollbar.maximum()
-                    if old_scroll_max > 0 and old_scroll_pos >= old_scroll_max - 10:
-                        # User was at or very near bottom - keep at bottom
+                    # Auto-update: intelligently preserve scroll
+                    new_max = scrollbar.maximum()
+                    # If user was at/near bottom, keep at bottom (new logs)
+                    # Otherwise restore their scroll position
+                    if old_max > 0 and old_value >= old_max - 10:
+                        # Was at bottom - stay at bottom
                         QTimer.singleShot(10, self._scroll_to_bottom)
                     else:
-                        # User was reading middle of logs - restore their position
-                        QTimer.singleShot(10, lambda pos=old_scroll_pos: scrollbar.setValue(pos))
+                        # Was somewhere else - restore position
+                        QTimer.singleShot(10, lambda: scrollbar.setValue(old_value))
             else:
-                # Content unchanged, reset flags but don't scroll
+                # Content unchanged - just reset flags
                 self._first_load = False
                 self._scroll_after_update = False
                 
@@ -365,7 +366,6 @@ class LogsDialog(QDialog):
                         "Success",
                         f"'{selected_file}' has been cleared successfully."
                     )
-                    logger.info(f"Log file cleared: {selected_file}")
                 else:
                     QMessageBox.information(
                         self,
@@ -379,7 +379,6 @@ class LogsDialog(QDialog):
                     "Error",
                     error_msg
                 )
-                logger.error(error_msg)
 
     def closeEvent(self, event) -> None:
         """Handle dialog close to clean up resources."""
