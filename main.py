@@ -6,13 +6,18 @@ Initializes and runs the PyQt5 GUI.
 import sys
 import logging
 from pathlib import Path
+from datetime import datetime
 
 # Configure logging
 log_dir = Path("logs")
 log_dir.mkdir(exist_ok=True)
 
+# Create daily log file with format dlbot_MMDD.log
+current_date = datetime.now().strftime("%m%d")
+log_file = log_dir / f"dlbot_{current_date}.log"
+
 # Create handlers with proper encoding
-file_handler = logging.FileHandler(log_dir / "dlbot.log", encoding='utf-8')
+file_handler = logging.FileHandler(log_file, encoding='utf-8')
 console_handler = logging.StreamHandler(sys.stdout)
 # Set console encoding to UTF-8 if running on Windows
 if sys.platform == 'win32' and sys.stdout is not None:
@@ -44,6 +49,9 @@ def main():
 
         # Create controller
         controller = AppController("config/config.json")
+
+        # Clean up old logs based on retention policy
+        controller.cleanup_old_logs()
 
         # Create main window
         window = MainWindow(controller)
