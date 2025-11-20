@@ -8,6 +8,7 @@ import subprocess
 import sys
 from typing import Dict, Optional
 from pathlib import Path
+from datetime import datetime, timedelta
 
 from src.core.listener import Listener, ListenerManager
 from src.utils.config import ConfigManager, Account
@@ -261,6 +262,7 @@ class AppController:
     def cleanup_old_logs(self) -> bool:
         """
         Clean up old log files based on retention policy.
+        Checks all dlbot_*.log files in the logs folder.
         
         Returns:
             True if cleanup was successful, False otherwise
@@ -269,31 +271,43 @@ class AppController:
             config = self.config_manager.get_config()
             retention_days = config.log_retention_days
             
-            import time
-            from datetime import datetime, timedelta
+            log_dir = Path("logs")
             
-            log_file = Path("logs") / "dlbot.log"
-            
-            if not log_file.exists():
-                logger.info("No log file found for cleanup")
+            if not log_dir.exists():
+                logger.info("Logs directory does not exist")
                 return True
-            
-            # Get file modification time
-            file_mod_time = log_file.stat().st_mtime
-            file_datetime = datetime.fromtimestamp(file_mod_time)
             
             # Calculate the cutoff time
-            current_time = datetime.now()
-            cutoff_time = current_time - timedelta(days=retention_days)
+            cutoff_time = datetime.now() - timedelta(days=retention_days)
             
-            if file_datetime < cutoff_time:
-                # File is older than retention period, clear it
-                log_file.write_text("")
-                logger.info(f"Cleared log file (retention: {retention_days} days)")
+            # Find all dlbot_*.log files
+            log_files = list(log_dir.glob("dlbot_*.log"))
+            
+            if not log_files:
+                logger.debug("No log files found for cleanup")
                 return True
+            
+            deleted_count = 0
+            for log_file in log_files:
+                try:
+                    # Get file modification time
+                    file_mod_time = log_file.stat().st_mtime
+                    file_datetime = datetime.fromtimestamp(file_mod_time)
+                    
+                    # Delete if older than retention period
+                    if file_datetime < cutoff_time:
+                        log_file.unlink()
+                        logger.info(f"Deleted old log file: {log_file.name} (age: {(datetime.now() - file_datetime).days} days)")
+                        deleted_count += 1
+                except Exception as e:
+                    logger.error(f"Error deleting log file {log_file.name}: {e}")
+            
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old log file(s) (retention: {retention_days} days)")
             else:
-                logger.debug(f"Log file is within retention period ({retention_days} days)")
-                return True
+                logger.debug(f"No log files older than {retention_days} days to delete")
+            
+            return True
                 
         except Exception as e:
             logger.error(f"Error cleaning up logs: {e}")
